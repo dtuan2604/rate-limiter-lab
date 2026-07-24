@@ -8,6 +8,7 @@
 
 - `architecture/SYSTEM_ARCHITECTURE.md` — components, state ownership, request flow, scalability, and failure behavior.
 - `architecture/POLICY_MODEL.md` — versioned declarative policy model, matching, distribution, and lifecycle.
+- `architecture/ALGORITHM_SEMANTICS.md` — Phase 1 in-memory algorithm contracts, formulas, complexity, burst behavior, and limitations.
 - `architecture/REPOSITORY_LAYOUT.md` — intended codebase and module layout.
 
 ## Quality

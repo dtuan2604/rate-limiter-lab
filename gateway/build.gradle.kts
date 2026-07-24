@@ -20,6 +20,7 @@ dependencies {
     testImplementation(platform("org.springframework.boot:spring-boot-dependencies:3.5.16"))
     testImplementation("org.springframework.boot:spring-boot-starter-test")
     testImplementation("io.projectreactor:reactor-test")
+    testImplementation("net.jqwik:jqwik:1.9.3")
 }
 
 tasks.withType<JavaCompile>().configureEach {
