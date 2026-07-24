@@ -1,3 +1,74 @@
 .agents/
 **/*AGENTS*
 README-CODEX.md
+
+*.class
+
+.coverage
+*.egg-info/
+
+*.tsbuildinfo
+admin-portal/coverage/
+admin-portal/dist/
+
+# Gradle build output and cache
+.gradle/
+build/
+**/build/
+
+# Node dependencies and build output
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+.next/
+coverage/
+
+# Python caches and environments
+__pycache__/
+**/__pycache__/
+*.py[cod]
+.mypy_cache/
+.ruff_cache/
+.pytest_cache/
+.venv/
+venv/
+
+# Environment variables and secrets
+.env
+.env.*
+!.env.example
+
+# IDE and OS files
+.vscode/
+.idea/
+.DS_Store
+
+# Logs and runtime output
+*.log
+logs/
+tmp/
+
+# Additional coverage output
+.coverage.*
+htmlcov/
+coverage.xml
+
+# Local environment tooling
+.envrc
+.direnv/
+
+# Private keys and keystores
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# Editor and Java output
+*.swp
+*.swo
+*~
+*.orig
+out/

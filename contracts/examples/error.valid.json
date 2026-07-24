@@ -1,0 +1,9 @@
+{
+  "status": 429,
+  "error": "RATE_LIMIT_EXCEEDED",
+  "message": "Request limit exceeded",
+  "policy": "client-orders-token-bucket",
+  "policyVersion": 3,
+  "retryAfterMilliseconds": 720,
+  "correlationId": "example-correlation-id"
+}

@@ -1,0 +1,160 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rate-limiter-lab.local/contracts/policy.schema.json",
+  "title": "Phase 0 Token Bucket Policy",
+  "description": "Initial schema limited to fields and token-bucket configuration documented in POLICY_MODEL.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "name",
+    "description",
+    "priority",
+    "match",
+    "identity",
+    "algorithm",
+    "failureMode",
+    "response"
+  ],
+  "properties": {
+    "name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "description": {
+      "type": "string"
+    },
+    "priority": {
+      "type": "integer"
+    },
+    "match": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "routeIds": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "methods": {
+          "type": "array",
+          "minItems": 1,
+          "uniqueItems": true,
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Z]+$"
+          }
+        },
+        "requiredHeaders": {
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": {
+            "minLength": 1
+          },
+          "additionalProperties": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "identity": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "components"
+      ],
+      "properties": {
+        "components": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "oneOf": [
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type",
+                  "name"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "HEADER"
+                  },
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                }
+              },
+              {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "type"
+                ],
+                "properties": {
+                  "type": {
+                    "const": "ROUTE_ID"
+                  }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "algorithm": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "type",
+        "capacity",
+        "refillTokens",
+        "refillPeriodMilliseconds",
+        "requestCost"
+      ],
+      "properties": {
+        "type": {
+          "const": "TOKEN_BUCKET"
+        },
+        "capacity": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "refillTokens": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "refillPeriodMilliseconds": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "requestCost": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "failureMode": {
+      "enum": [
+        "FAIL_OPEN",
+        "FAIL_CLOSED"
+      ]
+    },
+    "response": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "includeRetryAfter"
+      ],
+      "properties": {
+        "includeRetryAfter": {
+          "type": "boolean"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,8 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rate-limiter-lab.local/contracts/traffic-scenario.schema.json",
+  "title": "Phase 0 Traffic Scenario",
+  "description": "Non-inventive v0 scaffold. Phase 5 adds approved scenario fields schema-first.",
+  "type": "object",
+  "additionalProperties": false
+}

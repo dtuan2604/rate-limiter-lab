@@ -1,0 +1,34 @@
+{
+  "name": "client-orders-token-bucket",
+  "description": "Invalid non-positive capacity",
+  "priority": 100,
+  "match": {
+    "routeIds": ["orders.create"],
+    "methods": ["POST"],
+    "requiredHeaders": {
+      "X-Tenant-Id": "*"
+    }
+  },
+  "identity": {
+    "components": [
+      {
+        "type": "HEADER",
+        "name": "X-Client-Id"
+      },
+      {
+        "type": "ROUTE_ID"
+      }
+    ]
+  },
+  "algorithm": {
+    "type": "TOKEN_BUCKET",
+    "capacity": 0,
+    "refillTokens": 10,
+    "refillPeriodMilliseconds": 1000,
+    "requestCost": 1
+  },
+  "failureMode": "FAIL_CLOSED",
+  "response": {
+    "includeRetryAfter": true
+  }
+}

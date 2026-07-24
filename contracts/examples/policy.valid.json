@@ -1,0 +1,38 @@
+{
+  "name": "client-orders-token-bucket",
+  "description": "Per-client order creation limit",
+  "priority": 100,
+  "match": {
+    "routeIds": ["orders.create"],
+    "methods": ["POST"],
+    "requiredHeaders": {
+      "X-Tenant-Id": "*"
+    }
+  },
+  "identity": {
+    "components": [
+      {
+        "type": "HEADER",
+        "name": "X-Tenant-Id"
+      },
+      {
+        "type": "HEADER",
+        "name": "X-Client-Id"
+      },
+      {
+        "type": "ROUTE_ID"
+      }
+    ]
+  },
+  "algorithm": {
+    "type": "TOKEN_BUCKET",
+    "capacity": 20,
+    "refillTokens": 10,
+    "refillPeriodMilliseconds": 1000,
+    "requestCost": 1
+  },
+  "failureMode": "FAIL_CLOSED",
+  "response": {
+    "includeRetryAfter": true
+  }
+}

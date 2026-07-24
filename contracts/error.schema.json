@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rate-limiter-lab.local/contracts/error.schema.json",
+  "title": "Rate Limit Exceeded Error",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "status",
+    "error",
+    "message",
+    "policy",
+    "policyVersion",
+    "retryAfterMilliseconds",
+    "correlationId"
+  ],
+  "properties": {
+    "status": {
+      "const": 429
+    },
+    "error": {
+      "const": "RATE_LIMIT_EXCEEDED"
+    },
+    "message": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policy": {
+      "type": "string",
+      "minLength": 1
+    },
+    "policyVersion": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "retryAfterMilliseconds": {
+      "type": "integer",
+      "minimum": 0
+    },
+    "correlationId": {
+      "type": "string",
+      "minLength": 1
+    }
+  }
+}

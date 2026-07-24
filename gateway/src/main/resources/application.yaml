@@ -1,0 +1,15 @@
+spring:
+  application:
+    name: rate-limiter-gateway
+
+management:
+  endpoints:
+    enabled-by-default: false
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      enabled: true
+      probes:
+        enabled: true

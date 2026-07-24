@@ -1,0 +1,13 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
+info:
+  title: Rate Limiter Lab Admin API
+  version: 0.0.0
+  description: >-
+    Phase 0 contract foundation. Endpoint paths remain empty until Phase 4
+    defines approved administration behavior schema-first.
+paths: {}
+components:
+  schemas:
+    RateLimitExceeded:
+      $ref: ./error.schema.json
