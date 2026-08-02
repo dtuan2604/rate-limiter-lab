@@ -58,7 +58,7 @@ jacoco {
 val coverageClasses =
     files(
         sourceSets.main.get().output.asFileTree.matching {
-            // The only Phase 0 exclusion is the logic-free Spring Boot entry point.
+            // The only exclusion is the logic-free Spring Boot entry point.
             exclude("**/GatewayApplication.class")
         },
     )
@@ -83,6 +83,10 @@ tasks.jacocoTestCoverageVerification {
             }
             limit {
                 counter = "BRANCH"
+                minimum = "0.90".toBigDecimal()
+            }
+            limit {
+                counter = "METHOD"
                 minimum = "0.90".toBigDecimal()
             }
         }

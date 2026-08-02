@@ -30,4 +30,4 @@ conda run -n rate-limiter python -m build \
   mock-services
 npm --prefix admin-portal run build
 
-printf 'All Phase 0 application artifacts built successfully.\n'
+printf 'All application artifacts built successfully.\n'

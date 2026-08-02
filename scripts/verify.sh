@@ -16,5 +16,6 @@ scripts/build.sh
 docker compose config --quiet
 scripts/lint-dockerfiles.sh
 scripts/container-smoke.sh
+scripts/phase2-e2e.sh
 
-printf 'Phase 0 CI-equivalent verification passed.\n'
+printf 'Phase 2 CI-equivalent verification passed.\n'

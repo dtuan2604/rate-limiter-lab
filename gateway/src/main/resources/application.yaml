@@ -2,6 +2,20 @@ spring:
   application:
     name: rate-limiter-gateway
 
+rate-limiter:
+  gateway:
+    catalog-base-url: ${CATALOG_BASE_URL:http://localhost:8101}
+    backend-timeout: 2s
+    policies:
+      - id: catalog-client-fixed-window
+        version: 1
+        route-id: catalog.items
+        path: /proxy/catalog/items
+        method: GET
+        algorithm: FIXED_WINDOW
+        limit: 5
+        window: 10s
+
 management:
   endpoints:
     enabled-by-default: false
@@ -13,3 +27,8 @@ management:
       enabled: true
       probes:
         enabled: true
+      group:
+        liveness:
+          include: livenessState
+        readiness:
+          include: readinessState,catalogBackend

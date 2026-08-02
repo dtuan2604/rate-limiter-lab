@@ -1,0 +1,6 @@
+{
+  "status": 404,
+  "error": "ROUTE_NOT_FOUND",
+  "message": "No proxy route matches the request",
+  "correlationId": "example-correlation-id"
+}

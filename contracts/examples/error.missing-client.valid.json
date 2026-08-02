@@ -1,0 +1,6 @@
+{
+  "status": 400,
+  "error": "MISSING_CLIENT_ID",
+  "message": "X-Client-Id header is required",
+  "correlationId": "example-correlation-id"
+}

@@ -1,6 +1,6 @@
 # Verified Repository Commands
 
-All commands below run from the repository root unless a different working directory is stated. They were executed and inspected on 2026-07-24 on macOS arm64.
+All commands below run from the repository root unless a different working directory is stated. They were executed and inspected on 2026-07-26 on macOS arm64.
 
 ## Prerequisites
 
@@ -66,7 +66,12 @@ Runs the gateway, traffic simulator, each mock service independently, all contra
 scripts/coverage.sh
 ```
 
-Runs JaCoCo plus independent pytest-cov and Vitest gates. Exit 0 was observed. The final Python and frontend codebases each reported 100%; the Java gate passed with only the logic-free application entry point excluded. Controlled under-covered branches proved every codebase returns nonzero below 90%.
+Runs JaCoCo plus independent pytest-cov and Vitest gates. The script exports
+raw Python coverage data and separately enforces line, statement, branch, and
+function percentages so a combined score cannot mask a deficient metric. Exit
+0 was observed. Gateway coverage reported 98.58% lines, 93.55% branches, and
+100% methods. Traffic simulator, catalog, orders, payments, and portal each
+reported 100% for every supported metric.
 
 ### Application artifact builds
 
@@ -86,7 +91,12 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:jacocoTestReport :g
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:build --no-daemon
 ```
 
-All returned exit 0. The gateway test starts a real random-port WebFlux server, verifies Actuator health, and verifies `/` is absent. Phase 0 has no Redis/PostgreSQL integration test because it implements no storage behavior.
+All returned exit 0. The 102-test gateway suite covers the Phase 1 algorithms,
+static policy startup validation, matching, identity construction, local
+fixed-window orchestration, reactive request/response mapping, forwarding, and
+catalog-aware readiness. The real random-port application test verifies
+liveness remains up while readiness is down when catalog is unavailable.
+Phase 2 intentionally has no Redis or PostgreSQL integration.
 
 ## Python traffic simulator
 
@@ -111,7 +121,9 @@ conda run -n rate-limiter python -m pytest mock-services/tests/test_orders.py --
 conda run -n rate-limiter python -m pytest mock-services/tests/test_payments.py --cov=rate_limiter_mock_services.payments --cov-branch --cov-fail-under=90
 ```
 
-All returned exit 0 and each reported 100%.
+All returned exit 0 and each reported 100%. The catalog suite contains 11
+tests; orders and payments remain unchanged health-only foundations and are not
+started by Phase 2 Compose.
 
 Shared static and package checks:
 
@@ -149,7 +161,9 @@ Equivalent focused command:
 conda run -n rate-limiter python -m pytest contracts/tests
 ```
 
-Both returned exit 0 with seven passing tests. Valid token-bucket policy, empty traffic v0, structured error, and OpenAPI examples pass; invalid examples fail at asserted stable paths.
+Both returned exit 0 with 10 passing tests. Valid token-bucket policy, empty
+traffic v0, strict Phase 2 structured errors, and OpenAPI examples pass;
+invalid examples fail at asserted stable paths.
 
 ## Containers
 
@@ -165,10 +179,10 @@ Both returned exit 0. Hadolint runs from pinned image `hadolint/hadolint:v2.12.0
 ### Image build
 
 ```bash
-docker compose --profile tools build
+docker compose build gateway catalog
 ```
 
-Exit 0 was observed for gateway, traffic simulator, catalog, orders, payments, and admin portal images.
+Exit 0 was observed for the only two Phase 2 images.
 
 ### Health and smoke
 
@@ -176,11 +190,28 @@ Exit 0 was observed for gateway, traffic simulator, catalog, orders, payments, a
 scripts/container-smoke.sh
 ```
 
-Builds and starts the Phase 0 environment, waits up to 240 seconds for health, asserts exactly three gateway replicas, checks seven published health endpoints, runs the traffic-simulator one-shot image without traffic, and shuts down through a trap. Exit 0 and `Phase 0 containers are healthy; no product traffic was generated.` were observed.
+Builds and starts the Phase 2 environment, waits up to 240 seconds for health,
+asserts exactly one gateway, checks gateway catalog-aware readiness and catalog
+health, and shuts down through a trap. Exit 0 and
+`Phase 2 gateway and catalog containers are healthy.` were observed.
+
+### End-to-end acceptance
+
+```bash
+scripts/phase2-e2e.sh
+```
+
+Builds and starts gateway and catalog, asserts both containers are healthy,
+resets the protected catalog counter, sends six same-client requests, proves
+five catalog successes and one 429, proves exactly five catalog arrivals,
+allows a different client, verifies correlation propagation, and tears down
+with volumes and orphans removed. Exit 0 and
+`Phase 2 end-to-end acceptance passed with five forwarded requests and one rejection.`
+were observed.
 
 ### Destructive cleanup
 
-The smoke script preserves the PostgreSQL volume. Remove it only when test data is disposable:
+Phase 2 has no persistent volume. The required cleanup command is:
 
 ```bash
 docker compose down --volumes --remove-orphans
@@ -202,6 +233,6 @@ The complete CI-equivalent entry point is:
 scripts/verify.sh
 ```
 
-Exit 0 and `Phase 0 CI-equivalent verification passed.` were observed. The detailed
-milestone and RED-GREEN-REFACTOR evidence is recorded in the completed Phase 0
-ExecPlan.
+Exit 0 and `Phase 2 CI-equivalent verification passed.` were observed. The
+detailed milestone and RED-GREEN-REFACTOR evidence is recorded in the completed
+Phase 2 ExecPlan.

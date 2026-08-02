@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "rate-limiter-mock-services"
 version = "0.0.0"
-description = "Health-checkable Phase 0 mock-service foundations."
+description = "Phase 2 catalog backend plus health-only future-service foundations."
 readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [

@@ -51,8 +51,23 @@ def test_unapproved_traffic_field_fails_at_document_root() -> None:
 
 
 def test_documented_rate_limit_error_is_valid() -> None:
-    """The product specification's structured 429 shape is accepted."""
+    """The approved Phase 2 structured 429 shape is accepted."""
     assert validation_paths("error.schema.json", "error.valid.json") == []
+
+
+def test_missing_client_error_is_valid() -> None:
+    """The missing trusted simulation identity has a strict 400 contract."""
+    assert validation_paths("error.schema.json", "error.missing-client.valid.json") == []
+
+
+def test_unmatched_route_error_is_valid() -> None:
+    """An unmatched proxy request has a strict 404 contract."""
+    assert validation_paths("error.schema.json", "error.route-not-found.valid.json") == []
+
+
+def test_backend_unavailable_error_is_valid() -> None:
+    """A failed catalog connection has a strict 502 contract."""
+    assert validation_paths("error.schema.json", "error.backend-unavailable.valid.json") == []
 
 
 def test_negative_retry_after_fails_at_stable_path() -> None:

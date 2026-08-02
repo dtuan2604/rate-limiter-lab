@@ -1,6 +1,19 @@
 # Rate Limiter Lab
 
-This repository is in Phase 0: the build, test, coverage, contract, container, and CI foundations are implemented, but no rate-limiting product behavior exists yet.
+Phase 2 provides one locally runnable vertical slice:
+
+```text
+GET /proxy/catalog/items
+  -> Spring WebFlux gateway
+  -> static client/route policy
+  -> in-memory fixed-window limiter
+  -> FastAPI catalog backend
+```
+
+The configured simulation policy allows five requests per client in each
+epoch-aligned ten-second window. This phase deliberately uses one gateway and
+process-local state; it does not claim distributed or multi-replica
+enforcement.
 
 ## Prerequisites
 
@@ -29,4 +42,30 @@ Run the complete local CI-equivalent workflow:
 scripts/verify.sh
 ```
 
-See `docs/COMMANDS.md` for the verified focused commands and `docs/requirements/PROJECT_SPEC.md` for later product phases.
+Start the gateway and catalog:
+
+```bash
+docker compose up --build
+```
+
+Then call the proxy with a trusted local simulation identity:
+
+```bash
+curl --header 'X-Client-Id: demo-client' \
+  http://localhost:8080/proxy/catalog/items
+```
+
+Stop and remove the local environment:
+
+```bash
+docker compose down --volumes --remove-orphans
+```
+
+Run the real five-allowed/one-rejected acceptance proof:
+
+```bash
+scripts/phase2-e2e.sh
+```
+
+See `docs/COMMANDS.md` for verified focused commands and the completed Phase 2
+ExecPlan for design, TDD, coverage, and container evidence.

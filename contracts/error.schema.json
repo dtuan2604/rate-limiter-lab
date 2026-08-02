@@ -1,24 +1,31 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rate-limiter-lab.local/contracts/error.schema.json",
-  "title": "Rate Limit Exceeded Error",
+  "title": "Phase 2 Gateway Error",
   "type": "object",
   "additionalProperties": false,
   "required": [
     "status",
     "error",
     "message",
-    "policy",
-    "policyVersion",
-    "retryAfterMilliseconds",
     "correlationId"
   ],
   "properties": {
     "status": {
-      "const": 429
+      "enum": [
+        400,
+        404,
+        429,
+        502
+      ]
     },
     "error": {
-      "const": "RATE_LIMIT_EXCEEDED"
+      "enum": [
+        "MISSING_CLIENT_ID",
+        "ROUTE_NOT_FOUND",
+        "RATE_LIMIT_EXCEEDED",
+        "BACKEND_UNAVAILABLE"
+      ]
     },
     "message": {
       "type": "string",
@@ -28,10 +35,6 @@
       "type": "string",
       "minLength": 1
     },
-    "policyVersion": {
-      "type": "integer",
-      "minimum": 1
-    },
     "retryAfterMilliseconds": {
       "type": "integer",
       "minimum": 0
@@ -40,5 +43,117 @@
       "type": "string",
       "minLength": 1
     }
-  }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": 400
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "const": "MISSING_CLIENT_ID"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "policy"
+              ]
+            },
+            {
+              "required": [
+                "retryAfterMilliseconds"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": 404
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "const": "ROUTE_NOT_FOUND"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "policy"
+              ]
+            },
+            {
+              "required": [
+                "retryAfterMilliseconds"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": 429
+          }
+        }
+      },
+      "then": {
+        "required": [
+          "policy",
+          "retryAfterMilliseconds"
+        ],
+        "properties": {
+          "error": {
+            "const": "RATE_LIMIT_EXCEEDED"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": 502
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "const": "BACKEND_UNAVAILABLE"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "policy"
+              ]
+            },
+            {
+              "required": [
+                "retryAfterMilliseconds"
+              ]
+            }
+          ]
+        }
+      }
+    }
+  ]
 }
