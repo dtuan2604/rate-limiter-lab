@@ -1,11 +1,25 @@
 spring:
   application:
     name: rate-limiter-gateway
+  data:
+    redis:
+      connect-timeout: 500ms
+      timeout: ${REDIS_COMMAND_TIMEOUT:750ms}
+
+logging:
+  structured:
+    format:
+      console: logstash
 
 rate-limiter:
   gateway:
     catalog-base-url: ${CATALOG_BASE_URL:http://localhost:8101}
     backend-timeout: 2s
+    state-backend: ${RATE_LIMIT_STATE_BACKEND:REDIS}
+    failure-mode: ${RATE_LIMIT_FAILURE_MODE:FAIL_CLOSED}
+    instance-id: ${GATEWAY_INSTANCE_ID:local-gateway}
+    expose-instance-header: ${EXPOSE_GATEWAY_INSTANCE_HEADER:false}
+    redis-command-timeout: 750ms
     policies:
       - id: catalog-client-fixed-window
         version: 1
@@ -31,4 +45,4 @@ management:
         liveness:
           include: livenessState
         readiness:
-          include: readinessState,catalogBackend
+          include: readinessState,catalogBackend,rateLimitState

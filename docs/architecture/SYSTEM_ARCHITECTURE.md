@@ -79,6 +79,18 @@ Forbidden in distributed mode:
 
 ## 3. Request path
 
+The implemented Phase 3 catalog path is:
+
+```text
+client -> HAProxy -> gateway-1|gateway-2|gateway-3
+       -> static catalog policy -> fixed-window state adapter
+       -> Redis Lua -> mock catalog service
+```
+
+HAProxy is round-robin without affinity and admits only readiness-healthy
+replicas. `IN_MEMORY` remains an explicit single-instance comparison mode;
+`REDIS` is the distributed default.
+
 For each public request:
 
 1. The load balancer selects any healthy gateway replica.
@@ -120,10 +132,10 @@ Every script requires:
 
 ## 5. Redis key requirements
 
-Logical pattern:
+The implemented fixed-window pattern is:
 
 ```text
-ratelimit:{slot-tag}:<policy-id>:<version>:<algorithm>:<identity-hash>
+ratelimit:{p=<base64url-policy-id>:v=<version>:a=fixed-window:i=<sha256>}:w=<window-id>
 ```
 
 Requirements:
@@ -174,11 +186,37 @@ The automated scaling experiment must verify:
 
 The experiment should run once with Redis state and once with intentionally selected in-memory mode to demonstrate the failure of per-node limiting.
 
+### Phase 3 development topology
+
+Compose runs HAProxy on 8080, catalog observation on 8101, and direct gateway
+ports 8081..8083. HAProxy uses round-robin and active readiness checks with no
+session affinity. Redis and HAProxy images are pinned. Compose ordering waits
+only for containers to start; application health establishes dependency
+readiness. `X-Gateway-Instance` is enabled only for this development topology
+and does not enter identity construction.
+
+| Property | `IN_MEMORY` | `REDIS` |
+| --- | --- | --- |
+| Intended use | Unit tests, education, explicit single instance | Distributed runtime default |
+| Authoritative time | Injected Java clock | Redis TIME |
+| Authoritative state | One process | Redis string counter + TTL |
+| Replica correctness | Limit multiplies per process | One shared logical limit |
+| Redis failure | Not applicable | Explicit fail open or fail closed |
+| Restart | Local counter is lost | Counter survives gateway restart |
+
+Operationally, this remains a local lab: Redis is a single unreplicated node,
+HAProxy does not terminate TLS, and there is no Cluster, Sentinel, Kubernetes,
+cross-region clock strategy, or authentication infrastructure.
+
 ## 9. Failure model
 
 ### Redis unavailable
 
-Apply explicit `FAIL_OPEN` or `FAIL_CLOSED`. Emit a distinct decision reason. Never use local state as a silent substitute.
+Apply explicit `FAIL_OPEN` or `FAIL_CLOSED`. Emit a distinct decision reason.
+Never use local state as a silent substitute. Phase 3 defaults to fail closed:
+return 503 and readiness DOWN without forwarding. Fail open forwards with a
+degraded header, omits capacity metadata, and remains UP with degraded health
+details.
 
 ### PostgreSQL unavailable during normal proxying
 

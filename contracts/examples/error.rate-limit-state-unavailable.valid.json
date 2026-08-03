@@ -1,0 +1,6 @@
+{
+  "status": 503,
+  "error": "RATE_LIMIT_STATE_UNAVAILABLE",
+  "message": "Rate limit state is unavailable",
+  "correlationId": "phase3-correlation"
+}

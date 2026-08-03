@@ -22,7 +22,10 @@ public final class ClientIdentityExtractor {
     requireBounded(routeId, MAXIMUM_ROUTE_ID_CHARACTERS, "route ID");
 
     MessageDigest digest = sha256();
+    updateLengthDelimited(digest, "HEADER");
+    updateLengthDelimited(digest, "x-client-id");
     updateLengthDelimited(digest, clientId);
+    updateLengthDelimited(digest, "ROUTE_ID");
     updateLengthDelimited(digest, routeId);
     return Optional.of(new LimiterIdentity(HexFormat.of().formatHex(digest.digest())));
   }

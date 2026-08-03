@@ -1,6 +1,6 @@
 # Verified Repository Commands
 
-All commands below run from the repository root unless a different working directory is stated. They were executed and inspected on 2026-07-26 on macOS arm64.
+All commands below run from the repository root unless a different working directory is stated. Phase 3 commands were executed and inspected on 2026-08-02 on macOS arm64.
 
 ## Prerequisites
 
@@ -34,7 +34,8 @@ A dependency-resolution or peer-dependency error means the lock and manifest dis
 scripts/check-repository-structure.sh
 ```
 
-Verifies the pinned toolchain files and executable-codebase skeletons exist. Exit 0 and `Phase 0 repository skeleton is discoverable.` were observed.
+Verifies the pinned toolchains, executable-codebase skeletons, Lua resource,
+HAProxy configuration, Compose topology, and Phase 3 acceptance scripts exist.
 
 ### Formatting
 
@@ -58,7 +59,7 @@ Runs Java Checkstyle, Python Ruff, strict mypy, frontend ESLint, and strict Type
 scripts/test.sh
 ```
 
-Runs the gateway, traffic simulator, each mock service independently, all contracts, and the portal. Exit 0 was observed.
+Runs the gateway, traffic simulator, each mock service independently, all contracts, and the portal. Exit 0 was observed; the gateway reported 140 tests with no failures, errors, or skips.
 
 ### Independent coverage gates
 
@@ -69,8 +70,9 @@ scripts/coverage.sh
 Runs JaCoCo plus independent pytest-cov and Vitest gates. The script exports
 raw Python coverage data and separately enforces line, statement, branch, and
 function percentages so a combined score cannot mask a deficient metric. Exit
-0 was observed. Gateway coverage reported 98.58% lines, 93.55% branches, and
-100% methods. Traffic simulator, catalog, orders, payments, and portal each
+0 was observed. Gateway coverage reported 959/975 lines (98.36%), 316/338
+branches (93.49%), and 195/196 methods (99.49%). Traffic simulator, catalog,
+orders, payments, and portal each
 reported 100% for every supported metric.
 
 ### Application artifact builds
@@ -91,12 +93,12 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:jacocoTestReport :g
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:build --no-daemon
 ```
 
-All returned exit 0. The 102-test gateway suite covers the Phase 1 algorithms,
-static policy startup validation, matching, identity construction, local
-fixed-window orchestration, reactive request/response mapping, forwarding, and
-catalog-aware readiness. The real random-port application test verifies
-liveness remains up while readiness is down when catalog is unavailable.
-Phase 2 intentionally has no Redis or PostgreSQL integration.
+All returned exit 0. The 140-test gateway suite includes Phase 1 algorithms,
+static policy and identity behavior, both fixed-window state adapters,
+real-Redis Lua/TTL/expiry/cache-miss tests, 20 repetitions of 100 concurrent
+calls through three Lettuce clients, failure modes, structured logging,
+reactive HTTP forwarding, and dependency-aware readiness. PostgreSQL remains
+out of scope.
 
 ## Python traffic simulator
 
@@ -123,7 +125,7 @@ conda run -n rate-limiter python -m pytest mock-services/tests/test_payments.py 
 
 All returned exit 0 and each reported 100%. The catalog suite contains 11
 tests; orders and payments remain unchanged health-only foundations and are not
-started by Phase 2 Compose.
+started by Phase 3 Compose.
 
 Shared static and package checks:
 
@@ -161,8 +163,8 @@ Equivalent focused command:
 conda run -n rate-limiter python -m pytest contracts/tests
 ```
 
-Both returned exit 0 with 10 passing tests. Valid token-bucket policy, empty
-traffic v0, strict Phase 2 structured errors, and OpenAPI examples pass;
+Both returned exit 0 with 11 passing tests. Valid token-bucket policy, empty
+traffic v0, strict gateway errors including state-unavailable 503, and OpenAPI examples pass;
 invalid examples fail at asserted stable paths.
 
 ## Containers
@@ -179,10 +181,13 @@ Both returned exit 0. Hadolint runs from pinned image `hadolint/hadolint:v2.12.0
 ### Image build
 
 ```bash
-docker compose build gateway catalog
+docker compose build gateway-1 gateway-2 gateway-3 mock-catalog-service
+docker compose run --rm --no-deps load-balancer \
+  haproxy -c -f /usr/local/etc/haproxy/haproxy.cfg
 ```
 
-Exit 0 was observed for the only two Phase 2 images.
+The gateway/catalog images build successfully. The pinned HAProxy 3.0.8 image
+validates the checked-in configuration; Redis 7.4.2 and HAProxy use pinned tags.
 
 ### Health and smoke
 
@@ -190,28 +195,28 @@ Exit 0 was observed for the only two Phase 2 images.
 scripts/container-smoke.sh
 ```
 
-Builds and starts the Phase 2 environment, waits up to 240 seconds for health,
-asserts exactly one gateway, checks gateway catalog-aware readiness and catalog
-health, and shuts down through a trap. Exit 0 and
-`Phase 2 gateway and catalog containers are healthy.` were observed.
+Builds and starts HAProxy, three gateways, Redis, and catalog; waits for health;
+asserts exactly three gateways; checks load-balanced readiness, Redis, and
+catalog; and shuts down through a trap.
 
 ### End-to-end acceptance
 
 ```bash
-scripts/phase2-e2e.sh
+scripts/phase3-e2e.sh
+scripts/phase3-redis-failure-e2e.sh
 ```
 
-Builds and starts gateway and catalog, asserts both containers are healthy,
-resets the protected catalog counter, sends six same-client requests, proves
-five catalog successes and one 429, proves exactly five catalog arrivals,
-allows a different client, verifies correlation propagation, and tears down
-with volumes and orphans removed. Exit 0 and
-`Phase 2 end-to-end acceptance passed with five forwarded requests and one rejection.`
-were observed.
+The first script proves one global five-request limit through three replicas,
+responses from multiple instance IDs, Redis count/TTL/key hygiene, replica
+restart continuity, enabling a third replica without extra capacity, and
+unhealthy-replica removal. The second pauses Redis and proves fail-open
+forwarding/degraded metadata, fail-closed 503/readiness/HAProxy removal, exact
+catalog counts, no local fallback, and recovery from surviving Redis state.
+Both exited 0 and cleaned up containers and volumes.
 
 ### Destructive cleanup
 
-Phase 2 has no persistent volume. The required cleanup command is:
+The local Redis volume/state is disposable. The required cleanup command is:
 
 ```bash
 docker compose down --volumes --remove-orphans
@@ -233,6 +238,5 @@ The complete CI-equivalent entry point is:
 scripts/verify.sh
 ```
 
-Exit 0 and `Phase 2 CI-equivalent verification passed.` were observed. The
-detailed milestone and RED-GREEN-REFACTOR evidence is recorded in the completed
-Phase 2 ExecPlan.
+The detailed Phase 3 milestone and RED-GREEN-REFACTOR evidence is recorded in
+the active Phase 3 ExecPlan.

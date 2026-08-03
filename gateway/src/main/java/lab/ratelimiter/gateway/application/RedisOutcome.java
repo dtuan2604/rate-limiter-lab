@@ -1,0 +1,13 @@
+package lab.ratelimiter.gateway.application;
+
+public enum RedisOutcome {
+  NOT_APPLICABLE,
+  ALLOWED,
+  REJECTED,
+  TIMEOUT,
+  CONNECTION_FAILURE,
+  SCRIPT_ERROR,
+  MALFORMED_STATE,
+  MALFORMED_RESPONSE,
+  WINDOW_MISMATCH_EXHAUSTED
+}

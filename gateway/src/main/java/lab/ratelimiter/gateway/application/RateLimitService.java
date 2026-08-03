@@ -1,39 +1,53 @@
 package lab.ratelimiter.gateway.application;
 
-import java.time.Clock;
 import java.util.Objects;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.ConcurrentMap;
-import lab.ratelimiter.gateway.domain.limiter.InMemoryFixedWindowRateLimiter;
-import lab.ratelimiter.gateway.domain.limiter.PolicyId;
-import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
-import lab.ratelimiter.gateway.domain.limiter.RateLimitDecision;
+import java.util.Optional;
 import lab.ratelimiter.gateway.domain.limiter.RateLimitRequest;
 import lab.ratelimiter.gateway.identity.LimiterIdentity;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
+import lab.ratelimiter.gateway.state.redis.RedisStateException;
+import reactor.core.publisher.Mono;
 
 public final class RateLimitService {
 
-  private final Clock clock;
-  private final ConcurrentMap<LimiterKey, InMemoryFixedWindowRateLimiter> limiters =
-      new ConcurrentHashMap<>();
+  private final FixedWindowStateAdapter stateAdapter;
+  private final FailureMode failureMode;
 
-  public RateLimitService(Clock clock) {
-    this.clock = Objects.requireNonNull(clock, "clock");
+  public RateLimitService(FixedWindowStateAdapter stateAdapter, FailureMode failureMode) {
+    this.stateAdapter = Objects.requireNonNull(stateAdapter, "stateAdapter");
+    this.failureMode = Objects.requireNonNull(failureMode, "failureMode");
   }
 
-  public RateLimitDecision evaluate(CompiledPolicy compiledPolicy, LimiterIdentity identity) {
+  public Mono<RateLimitEvaluation> evaluate(
+      CompiledPolicy compiledPolicy, LimiterIdentity identity) {
     Objects.requireNonNull(compiledPolicy, "compiledPolicy");
     Objects.requireNonNull(identity, "identity");
-    LimiterKey key =
-        new LimiterKey(
-            compiledPolicy.policy().policyId(), compiledPolicy.policy().policyVersion(), identity);
-    InMemoryFixedWindowRateLimiter limiter =
-        limiters.computeIfAbsent(
-            key, ignored -> new InMemoryFixedWindowRateLimiter(compiledPolicy.policy(), clock));
-    return limiter.decide(new RateLimitRequest(1));
+    return stateAdapter
+        .decide(compiledPolicy.policy(), identity, new RateLimitRequest(1))
+        .map(
+            result ->
+                new RateLimitEvaluation(
+                    result.decision().allowed() ? RateLimitOutcome.ALLOW : RateLimitOutcome.REJECT,
+                    Optional.of(result.decision()),
+                    Optional.of(result.resetAfter()),
+                    result.stateBackend(),
+                    result.redisOutcome(),
+                    failureMode))
+        .onErrorResume(RedisStateException.class, this::failureEvaluation);
   }
 
-  private record LimiterKey(
-      PolicyId policyId, PolicyVersion policyVersion, LimiterIdentity identity) {}
+  private Mono<RateLimitEvaluation> failureEvaluation(RedisStateException failure) {
+    RateLimitOutcome outcome =
+        failureMode == FailureMode.FAIL_OPEN
+            ? RateLimitOutcome.DEGRADED_ALLOW
+            : RateLimitOutcome.STATE_UNAVAILABLE;
+    return Mono.just(
+        new RateLimitEvaluation(
+            outcome,
+            Optional.empty(),
+            Optional.empty(),
+            StateBackend.REDIS,
+            failure.outcome(),
+            failureMode));
+  }
 }

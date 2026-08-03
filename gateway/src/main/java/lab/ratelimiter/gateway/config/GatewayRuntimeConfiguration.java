@@ -1,6 +1,7 @@
 package lab.ratelimiter.gateway.config;
 
 import java.time.Clock;
+import lab.ratelimiter.gateway.application.FixedWindowStateAdapter;
 import lab.ratelimiter.gateway.application.RateLimitService;
 import lab.ratelimiter.gateway.http.GatewayHttpHandler;
 import lab.ratelimiter.gateway.http.GatewayRoutes;
@@ -9,9 +10,11 @@ import lab.ratelimiter.gateway.policy.StaticPolicySnapshot;
 import lab.ratelimiter.gateway.proxy.CatalogBackendClient;
 import lab.ratelimiter.gateway.proxy.CatalogReadinessIndicator;
 import lab.ratelimiter.gateway.proxy.WebClientCatalogBackendClient;
+import lab.ratelimiter.gateway.state.redis.RateLimitStateReadinessIndicator;
 import org.springframework.boot.actuate.health.ReactiveHealthIndicator;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+import org.springframework.data.redis.core.ReactiveStringRedisTemplate;
 import org.springframework.web.reactive.function.client.WebClient;
 import org.springframework.web.reactive.function.server.RouterFunction;
 import org.springframework.web.reactive.function.server.ServerResponse;
@@ -32,8 +35,9 @@ public class GatewayRuntimeConfiguration {
   }
 
   @Bean
-  RateLimitService rateLimitService(Clock gatewayClock) {
-    return new RateLimitService(gatewayClock);
+  RateLimitService rateLimitService(
+      FixedWindowStateAdapter stateAdapter, GatewayProperties properties) {
+    return new RateLimitService(stateAdapter, properties.failureMode());
   }
 
   @Bean
@@ -54,15 +58,30 @@ public class GatewayRuntimeConfiguration {
     return new CatalogReadinessIndicator(backendClient);
   }
 
+  @Bean(name = "rateLimitState")
+  ReactiveHealthIndicator rateLimitStateHealth(
+      ReactiveStringRedisTemplate redis, GatewayProperties properties) {
+    return new RateLimitStateReadinessIndicator(
+        redis,
+        properties.stateBackend(),
+        properties.failureMode(),
+        properties.redisCommandTimeout());
+  }
+
   @Bean
   GatewayHttpHandler gatewayHttpHandler(
       StaticPolicySnapshot policies,
       ClientIdentityExtractor identityExtractor,
       RateLimitService rateLimitService,
       CatalogBackendClient backendClient,
-      Clock gatewayClock) {
+      GatewayProperties properties) {
     return new GatewayHttpHandler(
-        policies, identityExtractor, rateLimitService, backendClient, gatewayClock);
+        policies,
+        identityExtractor,
+        rateLimitService,
+        backendClient,
+        properties.instanceId(),
+        properties.exposeInstanceHeader());
   }
 
   @Bean

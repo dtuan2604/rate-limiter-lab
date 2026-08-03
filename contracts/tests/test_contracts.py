@@ -70,6 +70,13 @@ def test_backend_unavailable_error_is_valid() -> None:
     assert validation_paths("error.schema.json", "error.backend-unavailable.valid.json") == []
 
 
+def test_rate_limit_state_unavailable_error_is_valid() -> None:
+    """A fail-closed Redis decision has a strict structured 503 contract."""
+    assert (
+        validation_paths("error.schema.json", "error.rate-limit-state-unavailable.valid.json") == []
+    )
+
+
 def test_negative_retry_after_fails_at_stable_path() -> None:
     """Negative retry durations are structurally invalid."""
     assert validation_paths("error.schema.json", "error.invalid.json") == [

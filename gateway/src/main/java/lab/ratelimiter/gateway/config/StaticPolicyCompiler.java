@@ -1,6 +1,7 @@
 package lab.ratelimiter.gateway.config;
 
 import java.net.URI;
+import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.HashSet;
 import java.util.List;
@@ -15,6 +16,11 @@ import lab.ratelimiter.gateway.policy.StaticPolicySnapshot;
 
 final class StaticPolicyCompiler {
 
+  private static final long MAXIMUM_LIMIT = 1_000_000;
+  private static final Duration MAXIMUM_WINDOW = Duration.ofDays(1);
+  private static final Duration MAXIMUM_REDIS_COMMAND_TIMEOUT = Duration.ofSeconds(10);
+  private static final int MAXIMUM_POLICY_ID_BYTES = 128;
+  private static final Pattern INSTANCE_ID = Pattern.compile("[A-Za-z0-9._-]{1,64}");
   private static final Pattern ROUTE_ID = Pattern.compile("[a-z][a-z0-9]*(?:\\.[a-z][a-z0-9]*)*");
 
   private StaticPolicyCompiler() {}
@@ -22,6 +28,7 @@ final class StaticPolicyCompiler {
   static StaticPolicySnapshot compile(GatewayProperties properties) {
     requireValidBackendUri(properties.catalogBaseUrl());
     requirePositiveDuration(properties.backendTimeout(), "backend timeout");
+    requireRuntimeConfiguration(properties);
     if (properties.policies().isEmpty()) {
       throw invalid("at least one static policy is required");
     }
@@ -40,6 +47,9 @@ final class StaticPolicyCompiler {
 
   private static CompiledPolicy compile(PolicyProperties external) {
     String id = requireText(external.id(), "policy ID");
+    if (id.getBytes(StandardCharsets.UTF_8).length > MAXIMUM_POLICY_ID_BYTES) {
+      throw invalid("policy ID exceeds " + MAXIMUM_POLICY_ID_BYTES + " UTF-8 bytes");
+    }
     long version = requirePositive(external.version(), "policy version");
     String routeId = requireText(external.routeId(), "route ID");
     if (!ROUTE_ID.matcher(routeId).matches()) {
@@ -55,10 +65,34 @@ final class StaticPolicyCompiler {
       throw invalid("unsupported algorithm: " + algorithm);
     }
     long limit = requirePositive(external.limit(), "limit");
+    if (limit > MAXIMUM_LIMIT) {
+      throw invalid("limit must not exceed " + MAXIMUM_LIMIT);
+    }
     Duration window = requirePositiveDuration(external.window(), "window");
+    if (window.compareTo(MAXIMUM_WINDOW) > 0) {
+      throw invalid("window must not exceed " + MAXIMUM_WINDOW);
+    }
     FixedWindowPolicy policy =
         new FixedWindowPolicy(new PolicyId(id), new PolicyVersion(version), limit, window);
     return new CompiledPolicy(routeId, path, method, policy);
+  }
+
+  private static void requireRuntimeConfiguration(GatewayProperties properties) {
+    if (properties.stateBackend() == null) {
+      throw invalid("state backend is required");
+    }
+    if (properties.failureMode() == null) {
+      throw invalid("failure mode is required");
+    }
+    String instanceId = requireText(properties.instanceId(), "instance ID");
+    if (!INSTANCE_ID.matcher(instanceId).matches()) {
+      throw invalid("instance ID must contain 1 to 64 safe characters");
+    }
+    Duration commandTimeout =
+        requirePositiveDuration(properties.redisCommandTimeout(), "Redis command timeout");
+    if (commandTimeout.compareTo(MAXIMUM_REDIS_COMMAND_TIMEOUT) > 0) {
+      throw invalid("Redis command timeout must not exceed " + MAXIMUM_REDIS_COMMAND_TIMEOUT);
+    }
   }
 
   private static void requireValidBackendUri(URI uri) {

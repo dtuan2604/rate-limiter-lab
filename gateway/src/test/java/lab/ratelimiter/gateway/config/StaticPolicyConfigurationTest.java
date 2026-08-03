@@ -8,6 +8,8 @@ import java.net.URI;
 import java.time.Duration;
 import java.util.List;
 import java.util.stream.Stream;
+import lab.ratelimiter.gateway.application.FailureMode;
+import lab.ratelimiter.gateway.application.StateBackend;
 import lab.ratelimiter.gateway.config.GatewayProperties.PolicyProperties;
 import lab.ratelimiter.gateway.domain.limiter.AlgorithmType;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
@@ -23,6 +25,11 @@ class StaticPolicyConfigurationTest {
   private static final String[] VALID_PROPERTIES = {
     "rate-limiter.gateway.catalog-base-url=http://catalog:8000",
     "rate-limiter.gateway.backend-timeout=2s",
+    "rate-limiter.gateway.state-backend=REDIS",
+    "rate-limiter.gateway.failure-mode=FAIL_CLOSED",
+    "rate-limiter.gateway.instance-id=gateway-1",
+    "rate-limiter.gateway.expose-instance-header=true",
+    "rate-limiter.gateway.redis-command-timeout=750ms",
     "rate-limiter.gateway.policies[0].id=catalog-client-fixed-window",
     "rate-limiter.gateway.policies[0].version=1",
     "rate-limiter.gateway.policies[0].route-id=catalog.items",
@@ -44,6 +51,13 @@ class StaticPolicyConfigurationTest {
             context -> {
               assertThat(context).hasNotFailed();
               StaticPolicySnapshot snapshot = context.getBean(StaticPolicySnapshot.class);
+              GatewayProperties properties = context.getBean(GatewayProperties.class);
+
+              assertThat(properties.stateBackend()).isEqualTo(StateBackend.REDIS);
+              assertThat(properties.failureMode()).isEqualTo(FailureMode.FAIL_CLOSED);
+              assertThat(properties.instanceId()).isEqualTo("gateway-1");
+              assertThat(properties.exposeInstanceHeader()).isTrue();
+              assertThat(properties.redisCommandTimeout()).isEqualTo(Duration.ofMillis(750));
 
               assertThat(snapshot.match("GET", "/proxy/catalog/items"))
                   .get()
@@ -64,6 +78,15 @@ class StaticPolicyConfigurationTest {
               assertThat(context).hasFailed();
               assertThat(context.getStartupFailure()).hasMessageContaining("static policy");
             });
+  }
+
+  @ParameterizedTest(name = "{0}")
+  @MethodSource("invalidRuntimeOverrides")
+  void invalidRuntimeConfigurationFailsStartup(String description, String override) {
+    contextRunner
+        .withPropertyValues(VALID_PROPERTIES)
+        .withPropertyValues(override)
+        .run(context -> assertThat(context).hasFailed());
   }
 
   @Test
@@ -98,7 +121,7 @@ class StaticPolicyConfigurationTest {
 
     List<GatewayProperties> invalid =
         List.of(
-            new GatewayProperties(null, Duration.ofSeconds(1), List.of(valid)),
+            properties(null, Duration.ofSeconds(1), valid),
             properties(URI.create("/catalog"), Duration.ofSeconds(1), valid),
             properties(URI.create("http:/catalog"), Duration.ofSeconds(1), valid),
             properties(URI.create("http://user@catalog"), Duration.ofSeconds(1), valid),
@@ -107,7 +130,15 @@ class StaticPolicyConfigurationTest {
             properties(URI.create("http://catalog"), null, valid),
             properties(URI.create("http://catalog"), Duration.ofSeconds(-1), valid),
             properties(URI.create("http://catalog"), Duration.ofNanos(1), valid),
-            new GatewayProperties(URI.create("http://catalog"), Duration.ofSeconds(1), List.of()));
+            new GatewayProperties(
+                URI.create("http://catalog"),
+                Duration.ofSeconds(1),
+                StateBackend.REDIS,
+                FailureMode.FAIL_CLOSED,
+                "gateway-1",
+                true,
+                Duration.ofMillis(750),
+                List.of()));
 
     for (GatewayProperties properties : invalid) {
       assertThatThrownBy(() -> StaticPolicyCompiler.compile(properties))
@@ -257,9 +288,22 @@ class StaticPolicyConfigurationTest {
         Arguments.of(
             "unsupported algorithm", "rate-limiter.gateway.policies[0].algorithm=TOKEN_BUCKET"),
         Arguments.of("invalid limit", "rate-limiter.gateway.policies[0].limit=0"),
+        Arguments.of("excessive limit", "rate-limiter.gateway.policies[0].limit=1000001"),
         Arguments.of("invalid window", "rate-limiter.gateway.policies[0].window=0s"),
+        Arguments.of("excessive window", "rate-limiter.gateway.policies[0].window=86400001ms"),
         Arguments.of("invalid backend URI", "rate-limiter.gateway.catalog-base-url=ftp://catalog"),
         Arguments.of("invalid timeout", "rate-limiter.gateway.backend-timeout=0s"));
+  }
+
+  private static Stream<Arguments> invalidRuntimeOverrides() {
+    return Stream.of(
+        Arguments.of("unknown backend", "rate-limiter.gateway.state-backend=UNKNOWN"),
+        Arguments.of("unknown failure mode", "rate-limiter.gateway.failure-mode=UNKNOWN"),
+        Arguments.of("blank instance", "rate-limiter.gateway.instance-id="),
+        Arguments.of("overlong instance", "rate-limiter.gateway.instance-id=" + "x".repeat(65)),
+        Arguments.of("zero command timeout", "rate-limiter.gateway.redis-command-timeout=0ms"),
+        Arguments.of(
+            "excessive command timeout", "rate-limiter.gateway.redis-command-timeout=11s"));
   }
 
   private static void assertCatalogPolicy(CompiledPolicy compiled) {
@@ -274,7 +318,15 @@ class StaticPolicyConfigurationTest {
   }
 
   private static GatewayProperties properties(URI uri, Duration timeout, PolicyProperties policy) {
-    return new GatewayProperties(uri, timeout, List.of(policy));
+    return new GatewayProperties(
+        uri,
+        timeout,
+        StateBackend.REDIS,
+        FailureMode.FAIL_CLOSED,
+        "gateway-1",
+        true,
+        Duration.ofMillis(750),
+        List.of(policy));
   }
 
   private static PolicyProperties validPolicy() {

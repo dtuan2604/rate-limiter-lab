@@ -33,17 +33,21 @@ class RateLimitServiceTest {
   @Test
   void firstFiveRequestsAreAllowedAndSixthIsRejected() {
     MutableClock clock = new MutableClock(START);
-    RateLimitService service = new RateLimitService(clock);
+    RateLimitService service =
+        new RateLimitService(new InMemoryFixedWindowStateAdapter(clock), FailureMode.FAIL_CLOSED);
     LimiterIdentity identity =
         identityExtractor.extract("client-a", POLICY.routeId()).orElseThrow();
 
     for (int request = 1; request <= 5; request++) {
-      RateLimitDecision decision = service.evaluate(POLICY, identity);
+      RateLimitDecision decision =
+          service.evaluate(POLICY, identity).block().rateLimitDecision().orElseThrow();
       assertThat(decision.allowed()).isTrue();
       assertThat(decision.remaining()).isEqualTo(5 - request);
     }
 
-    RateLimitDecision rejected = service.evaluate(POLICY, identity);
+    RateLimitEvaluation evaluation = service.evaluate(POLICY, identity).block();
+    RateLimitDecision rejected = evaluation.rateLimitDecision().orElseThrow();
+    assertThat(evaluation.outcome()).isEqualTo(RateLimitOutcome.REJECT);
     assertThat(rejected.allowed()).isFalse();
     assertThat(rejected.remaining()).isZero();
     assertThat(rejected.retryAfter()).contains(Duration.ofSeconds(10));
@@ -52,35 +56,44 @@ class RateLimitServiceTest {
   @Test
   void differentClientsAndRoutesHaveIndependentLimits() {
     MutableClock clock = new MutableClock(START);
-    RateLimitService service = new RateLimitService(clock);
+    RateLimitService service =
+        new RateLimitService(new InMemoryFixedWindowStateAdapter(clock), FailureMode.FAIL_CLOSED);
     LimiterIdentity first = identityExtractor.extract("client-a", POLICY.routeId()).orElseThrow();
     LimiterIdentity second = identityExtractor.extract("client-b", POLICY.routeId()).orElseThrow();
     LimiterIdentity otherRoute =
         identityExtractor.extract("client-a", "catalog.details").orElseThrow();
 
     for (int request = 0; request < 5; request++) {
-      assertThat(service.evaluate(POLICY, first).allowed()).isTrue();
+      assertThat(
+              service.evaluate(POLICY, first).block().rateLimitDecision().orElseThrow().allowed())
+          .isTrue();
     }
 
-    assertThat(service.evaluate(POLICY, first).allowed()).isFalse();
-    assertThat(service.evaluate(POLICY, second).allowed()).isTrue();
-    assertThat(service.evaluate(POLICY, otherRoute).allowed()).isTrue();
+    assertThat(service.evaluate(POLICY, first).block().outcome())
+        .isEqualTo(RateLimitOutcome.REJECT);
+    assertThat(service.evaluate(POLICY, second).block().outcome())
+        .isEqualTo(RateLimitOutcome.ALLOW);
+    assertThat(service.evaluate(POLICY, otherRoute).block().outcome())
+        .isEqualTo(RateLimitOutcome.ALLOW);
   }
 
   @Test
   void requestsAreAllowedAfterInjectedClockEntersTheNextWindow() {
     MutableClock clock = new MutableClock(START);
-    RateLimitService service = new RateLimitService(clock);
+    RateLimitService service =
+        new RateLimitService(new InMemoryFixedWindowStateAdapter(clock), FailureMode.FAIL_CLOSED);
     LimiterIdentity identity =
         identityExtractor.extract("client-a", POLICY.routeId()).orElseThrow();
     for (int request = 0; request < 5; request++) {
-      service.evaluate(POLICY, identity);
+      service.evaluate(POLICY, identity).block();
     }
-    assertThat(service.evaluate(POLICY, identity).allowed()).isFalse();
+    assertThat(service.evaluate(POLICY, identity).block().outcome())
+        .isEqualTo(RateLimitOutcome.REJECT);
 
     clock.advance(Duration.ofSeconds(10));
 
-    RateLimitDecision nextWindow = service.evaluate(POLICY, identity);
+    RateLimitDecision nextWindow =
+        service.evaluate(POLICY, identity).block().rateLimitDecision().orElseThrow();
     assertThat(nextWindow.allowed()).isTrue();
     assertThat(nextWindow.remaining()).isEqualTo(4);
   }

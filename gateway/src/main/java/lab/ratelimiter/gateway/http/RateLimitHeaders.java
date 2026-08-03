@@ -1,8 +1,6 @@
 package lab.ratelimiter.gateway.http;
 
-import java.time.Clock;
 import java.time.Duration;
-import java.time.Instant;
 import lab.ratelimiter.gateway.domain.limiter.RateLimitDecision;
 import org.springframework.http.HttpHeaders;
 
@@ -20,14 +18,13 @@ final class RateLimitHeaders {
       HttpHeaders headers,
       RateLimitDecision decision,
       String correlationId,
-      Clock clock,
+      Duration resetAfter,
       boolean includeRetryAfter) {
     headers.set(LIMIT, Long.toString(decision.limit()));
     headers.set(REMAINING, Long.toString(decision.remaining()));
-    decision
-        .resetAt()
-        .ifPresent(
-            resetAt -> headers.set(RESET, Long.toString(secondsUntil(clock.instant(), resetAt))));
+    if (decision.resetAt().isPresent()) {
+      headers.set(RESET, Long.toString(ceilingSeconds(resetAfter)));
+    }
     headers.set(POLICY, decision.policyId().value());
     headers.set(CORRELATION_ID, correlationId);
     if (includeRetryAfter) {
@@ -37,11 +34,6 @@ final class RateLimitHeaders {
               retryAfter ->
                   headers.set(HttpHeaders.RETRY_AFTER, Long.toString(ceilingSeconds(retryAfter))));
     }
-  }
-
-  private static long secondsUntil(Instant now, Instant resetAt) {
-    Duration duration = resetAt.isAfter(now) ? Duration.between(now, resetAt) : Duration.ZERO;
-    return ceilingSeconds(duration);
   }
 
   private static long ceilingSeconds(Duration duration) {

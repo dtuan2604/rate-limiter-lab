@@ -26,6 +26,8 @@ class ClientIdentityExtractorTest {
     assertThat(first).isEqualTo(same);
     assertThat(first).isNotEqualTo(otherClient).isNotEqualTo(otherRoute);
     assertThat(first.digest()).hasSize(64).doesNotContain("client-a", "catalog.items");
+    assertThat(first.digest())
+        .isEqualTo("b2768ba5e4b3f3f70b75306beaf5724ae626a3c7d9cd93859832c841d28ea395");
   }
 
   @Test

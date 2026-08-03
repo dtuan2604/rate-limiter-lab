@@ -1,4 +1,4 @@
-# In-Memory Rate Limiter Algorithm Semantics
+# Rate Limiter Algorithm Semantics
 
 ## Purpose and boundary
 
@@ -99,6 +99,29 @@ again at the beginning of the next. Nearly `2 * limit` cost can therefore pass
 in a very short real interval. State and transition cost are constant, making
 this the simplest algorithm, but it does not model a continuously trailing
 window.
+
+### Phase 3 Redis representation
+
+Distributed mode preserves the same allow/reject/count semantics for request
+cost one while changing the authoritative time and storage representation.
+Redis TIME, truncated to epoch milliseconds, selects the epoch-aligned
+half-open window. One Lua execution validates the candidate key/window, reads
+canonical integer state, increments allowed requests only, and applies
+PEXPIREAT at the exclusive boundary. A rejection leaves the stored count
+unchanged. Retry-after and reset delay are the returned boundary TTL; Java does
+not subtract its local wall clock.
+
+The key and ten-integer script contract are specified by ADRs 0012 and 0013.
+Distributed configuration accepts limits 1..1,000,000 and windows 1 ms..24 h
+so all Lua arithmetic stays within exact integer range. Policy versions,
+routes, and normalized hashed identities have independent state. Request cost
+remains exactly one because the Phase 3 external static policy does not expose
+variable costs.
+
+Intentional differences from the in-memory reference are Redis server time,
+string counter storage, exact Redis key expiry, and clock rollback behavior.
+Redis rollback can revisit an older epoch window; the local teaching limiter
+instead clamps its injected clock. Neither Redis failure mode uses local state.
 
 ## Sliding Window Log
 
@@ -254,8 +277,9 @@ Every transition replaces one immutable state object. Shared contract tests run
 100 synchronized callers against every implementation and assert that exactly
 the configured capacity is admitted when time is fixed.
 
-This proves only one-instance correctness. Phases 2 and 3 must use Redis server
-time and one atomic server-side operation, then run the shared behavior tables
-plus independent-client, TTL, malformed-state, and multi-replica concurrency
-tests. No future Redis failure path may silently substitute these in-memory
+This proves only one-instance correctness. Phase 3 uses Redis server time and
+one atomic server-side operation. Real-Redis tests cover independent clients,
+routes and versions, TTL, malformed state, script cache misses, and concurrent
+calls through independent clients. Composed tests prove one limit across three
+gateway processes. No Redis failure path may silently substitute the in-memory
 objects.

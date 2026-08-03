@@ -8,7 +8,11 @@ import java.time.Instant;
 import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.List;
+import lab.ratelimiter.gateway.application.FailureMode;
+import lab.ratelimiter.gateway.application.FixedWindowStateAdapter;
+import lab.ratelimiter.gateway.application.InMemoryFixedWindowStateAdapter;
 import lab.ratelimiter.gateway.application.RateLimitService;
+import lab.ratelimiter.gateway.application.RedisOutcome;
 import lab.ratelimiter.gateway.domain.limiter.FixedWindowPolicy;
 import lab.ratelimiter.gateway.domain.limiter.PolicyId;
 import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
@@ -18,6 +22,7 @@ import lab.ratelimiter.gateway.policy.StaticPolicySnapshot;
 import lab.ratelimiter.gateway.proxy.CatalogBackendClient;
 import lab.ratelimiter.gateway.proxy.CatalogBackendRequest;
 import lab.ratelimiter.gateway.proxy.CatalogBackendResponse;
+import lab.ratelimiter.gateway.state.redis.RedisStateException;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.http.HttpHeaders;
@@ -55,9 +60,11 @@ class GatewayHttpHandlerTest {
         new GatewayHttpHandler(
             new StaticPolicySnapshot(List.of(compiled)),
             new ClientIdentityExtractor(),
-            new RateLimitService(clock),
+            new RateLimitService(
+                new InMemoryFixedWindowStateAdapter(clock), FailureMode.FAIL_CLOSED),
             backend,
-            clock);
+            "gateway-test",
+            true);
     client = WebTestClient.bindToRouterFunction(GatewayRoutes.routes(handler)).build();
   }
 
@@ -311,6 +318,97 @@ class GatewayHttpHandlerTest {
             JsonCompareMode.STRICT);
 
     assertThat(backend.attempts).isEqualTo(1);
+  }
+
+  @Test
+  void failOpenForwardsWithDegradedMetadataAndNoMisleadingCapacityHeaders() {
+    client = failureClient(FailureMode.FAIL_OPEN, RedisOutcome.TIMEOUT);
+
+    client
+        .get()
+        .uri("/proxy/catalog/items")
+        .header(CLIENT_ID, "fail-open-client")
+        .header(CORRELATION_ID, "fail-open-correlation")
+        .exchange()
+        .expectStatus()
+        .isOk()
+        .expectHeader()
+        .valueEquals("X-Gateway-Instance", "gateway-test")
+        .expectHeader()
+        .valueEquals("X-RateLimit-Degraded", "true")
+        .expectHeader()
+        .valueEquals(CORRELATION_ID, "fail-open-correlation")
+        .expectHeader()
+        .doesNotExist("RateLimit-Limit")
+        .expectHeader()
+        .doesNotExist("RateLimit-Remaining")
+        .expectHeader()
+        .doesNotExist("RateLimit-Reset");
+
+    assertThat(backend.requests).hasSize(1);
+  }
+
+  @Test
+  void failClosedReturnsStructured503WithCorrelationAndNeverForwards() {
+    client = failureClient(FailureMode.FAIL_CLOSED, RedisOutcome.CONNECTION_FAILURE);
+
+    client
+        .get()
+        .uri("/proxy/catalog/items")
+        .header(CLIENT_ID, "fail-closed-client")
+        .header(CORRELATION_ID, "fail-closed-correlation")
+        .exchange()
+        .expectStatus()
+        .isEqualTo(503)
+        .expectHeader()
+        .valueEquals("X-Gateway-Instance", "gateway-test")
+        .expectHeader()
+        .valueEquals(CORRELATION_ID, "fail-closed-correlation")
+        .expectHeader()
+        .doesNotExist("X-RateLimit-Degraded")
+        .expectBody()
+        .json(
+            """
+            {
+              "status": 503,
+              "error": "RATE_LIMIT_STATE_UNAVAILABLE",
+              "message": "Rate-limit state is unavailable",
+              "correlationId": "fail-closed-correlation"
+            }
+            """,
+            JsonCompareMode.STRICT);
+
+    assertThat(backend.attempts).isZero();
+    assertThat(backend.requests).isEmpty();
+  }
+
+  private WebTestClient failureClient(FailureMode failureMode, RedisOutcome outcome) {
+    FixedWindowStateAdapter failing =
+        (policy, identity, request) ->
+            Mono.error(new RedisStateException(outcome, "detail must not leak"));
+    GatewayHttpHandler handler =
+        new GatewayHttpHandler(
+            policies(),
+            new ClientIdentityExtractor(),
+            new RateLimitService(failing, failureMode),
+            backend,
+            "gateway-test",
+            true);
+    return WebTestClient.bindToRouterFunction(GatewayRoutes.routes(handler)).build();
+  }
+
+  private static StaticPolicySnapshot policies() {
+    return new StaticPolicySnapshot(
+        List.of(
+            new CompiledPolicy(
+                "catalog.items",
+                "/proxy/catalog/items",
+                "GET",
+                new FixedWindowPolicy(
+                    new PolicyId("catalog-client-fixed-window"),
+                    new PolicyVersion(1),
+                    5,
+                    Duration.ofSeconds(10)))));
   }
 
   private static final class RecordingCatalogBackend implements CatalogBackendClient {

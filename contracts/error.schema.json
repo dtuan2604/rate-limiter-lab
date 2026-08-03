@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://rate-limiter-lab.local/contracts/error.schema.json",
-  "title": "Phase 2 Gateway Error",
+  "title": "Gateway Error",
   "type": "object",
   "additionalProperties": false,
   "required": [
@@ -16,7 +16,8 @@
         400,
         404,
         429,
-        502
+        502,
+        503
       ]
     },
     "error": {
@@ -24,7 +25,8 @@
         "MISSING_CLIENT_ID",
         "ROUTE_NOT_FOUND",
         "RATE_LIMIT_EXCEEDED",
-        "BACKEND_UNAVAILABLE"
+        "BACKEND_UNAVAILABLE",
+        "RATE_LIMIT_STATE_UNAVAILABLE"
       ]
     },
     "message": {
@@ -137,6 +139,36 @@
         "properties": {
           "error": {
             "const": "BACKEND_UNAVAILABLE"
+          }
+        },
+        "not": {
+          "anyOf": [
+            {
+              "required": [
+                "policy"
+              ]
+            },
+            {
+              "required": [
+                "retryAfterMilliseconds"
+              ]
+            }
+          ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": {
+            "const": 503
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "error": {
+            "const": "RATE_LIMIT_STATE_UNAVAILABLE"
           }
         },
         "not": {

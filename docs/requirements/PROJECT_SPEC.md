@@ -303,31 +303,41 @@ Establish builds, test frameworks, coverage gates, static analysis, CI, containe
 
 Define common contracts and invariants. Implement all algorithms with injectable time and concurrency tests.
 
-### Phase 2 — first end-to-end vertical slice
+### Phase 2 — local single-gateway vertical slice
 
-Implement client -> load balancer -> multiple gateways -> fixed-window Redis decision -> one backend. Use a static policy initially.
+Implement client -> one gateway -> in-memory fixed-window decision -> catalog
+backend. Establish HTTP, policy matching, identity, response, forwarding,
+health, contract, and container boundaries without claiming horizontal
+correctness, as approved by ADR 0011.
 
-### Phase 3 — remaining distributed algorithms
+### Phase 3 — distributed fixed-window enforcement
+
+Replace only the catalog fixed-window runtime state with Redis Lua and Redis
+server time. Run three stateless gateways behind a non-sticky load balancer and
+prove one five-request limit is shared globally, including restart, scale,
+unhealthy-replica, and Redis failure scenarios.
+
+### Phase 4 — remaining distributed algorithms
 
 Implement and verify one algorithm at a time, starting with token bucket, then sliding counter, sliding log, and finally leaky-bucket policing.
 
-### Phase 4 — policy control plane
+### Phase 5 — policy control plane
 
 Add PostgreSQL versioning, admin API, policy activation, Pub/Sub invalidation, polling reconciliation, and per-replica snapshot visibility.
 
-### Phase 5 — traffic simulator and all mock services
+### Phase 6 — traffic simulator and all mock services
 
 Complete scenarios and experiment reporting.
 
-### Phase 6 — admin portal
+### Phase 7 — admin portal
 
 Implement portal flows against tested schemas and APIs.
 
-### Phase 7 — observability and failure experiments
+### Phase 8 — observability and failure experiments
 
 Complete dashboards, controlled failures, scaling demonstrations, and documented experiments.
 
-### Phase 8 — optional distributed request queue
+### Phase 9 — optional distributed request queue
 
 Proceed only after approval of delivery-semantics ADR and proof that the policing implementation is complete.
 

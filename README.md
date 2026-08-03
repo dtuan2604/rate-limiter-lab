@@ -1,19 +1,20 @@
 # Rate Limiter Lab
 
-Phase 2 provides one locally runnable vertical slice:
+Phase 3 provides a distributed fixed-window vertical slice:
 
 ```text
 GET /proxy/catalog/items
-  -> Spring WebFlux gateway
+  -> HAProxy round-robin load balancer
+  -> one of three stateless Spring WebFlux gateways
   -> static client/route policy
-  -> in-memory fixed-window limiter
+  -> atomic Redis fixed-window limiter using Redis TIME
   -> FastAPI catalog backend
 ```
 
 The configured simulation policy allows five requests per client in each
-epoch-aligned ten-second window. This phase deliberately uses one gateway and
-process-local state; it does not claim distributed or multi-replica
-enforcement.
+epoch-aligned ten-second window across all replicas combined. Redis is the
+authoritative runtime state in distributed mode. Explicit `IN_MEMORY` mode is
+retained for single-instance education and comparison, never as fallback.
 
 ## Prerequisites
 
@@ -42,7 +43,7 @@ Run the complete local CI-equivalent workflow:
 scripts/verify.sh
 ```
 
-Start the gateway and catalog:
+Start HAProxy, three gateways, Redis, and catalog:
 
 ```bash
 docker compose up --build
@@ -61,11 +62,12 @@ Stop and remove the local environment:
 docker compose down --volumes --remove-orphans
 ```
 
-Run the real five-allowed/one-rejected acceptance proof:
+Run the distributed and Redis-failure acceptance proofs:
 
 ```bash
-scripts/phase2-e2e.sh
+scripts/phase3-e2e.sh
+scripts/phase3-redis-failure-e2e.sh
 ```
 
-See `docs/COMMANDS.md` for verified focused commands and the completed Phase 2
-ExecPlan for design, TDD, coverage, and container evidence.
+See `docs/COMMANDS.md` for verified commands and the active Phase 3 ExecPlan
+for design, TDD, coverage, concurrency, and container evidence.
