@@ -10,6 +10,7 @@ final class RateLimitHeaders {
   private static final String REMAINING = "RateLimit-Remaining";
   private static final String RESET = "RateLimit-Reset";
   private static final String POLICY = "X-RateLimit-Policy";
+  private static final String POLICY_VERSION = "X-RateLimit-Policy-Version";
   private static final String CORRELATION_ID = "X-Correlation-Id";
 
   private RateLimitHeaders() {}
@@ -26,6 +27,7 @@ final class RateLimitHeaders {
       headers.set(RESET, Long.toString(ceilingSeconds(resetAfter)));
     }
     headers.set(POLICY, decision.policyId().value());
+    headers.set(POLICY_VERSION, Long.toString(decision.policyVersion().value()));
     headers.set(CORRELATION_ID, correlationId);
     if (includeRetryAfter) {
       decision

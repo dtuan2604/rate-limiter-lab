@@ -1,0 +1,56 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rate-limiter-lab.local/contracts/policy-snapshot.schema.json",
+  "title": "Gateway Policy Snapshot Metadata",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "gatewayInstanceId",
+    "snapshotRevision",
+    "loadedAt",
+    "activePolicies",
+    "lastSuccessfulReconciliation",
+    "lastEventProcessed",
+    "degraded",
+    "degradationReasons"
+  ],
+  "properties": {
+    "gatewayInstanceId": {"type": "string", "minLength": 1, "maxLength": 64},
+    "snapshotRevision": {"type": "integer", "minimum": 0},
+    "loadedAt": {"type": "string", "format": "date-time"},
+    "activePolicies": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["policyId", "version"],
+        "properties": {
+          "policyId": {"type": "string", "minLength": 1, "maxLength": 128},
+          "version": {"type": "integer", "minimum": 1}
+        }
+      }
+    },
+    "lastSuccessfulReconciliation": {"type": ["string", "null"], "format": "date-time"},
+    "lastEventProcessed": {
+      "oneOf": [
+        {"type": "null"},
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["eventId", "eventType", "processedAt"],
+          "properties": {
+            "eventId": {"type": "string", "format": "uuid"},
+            "eventType": {"enum": ["POLICY_ACTIVATED", "POLICY_DISABLED"]},
+            "processedAt": {"type": "string", "format": "date-time"}
+          }
+        }
+      ]
+    },
+    "degraded": {"type": "boolean"},
+    "degradationReasons": {
+      "type": "array",
+      "uniqueItems": true,
+      "items": {"type": "string", "minLength": 1, "maxLength": 128}
+    }
+  }
+}

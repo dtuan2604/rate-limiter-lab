@@ -1,20 +1,21 @@
 # Rate Limiter Lab
 
-Phase 3 provides a distributed fixed-window vertical slice:
+Phase 4 provides a PostgreSQL-backed policy control plane and a distributed
+fixed-window data plane:
 
 ```text
-GET /proxy/catalog/items
-  -> HAProxy round-robin load balancer
-  -> one of three stateless Spring WebFlux gateways
-  -> static client/route policy
-  -> atomic Redis fixed-window limiter using Redis TIME
-  -> FastAPI catalog backend
+Admin client -> authenticated gateway admin API -> PostgreSQL -> durable outbox
+                                                           -> Redis Pub/Sub
+                                                           -> all gateways
+
+GET /proxy/catalog/items -> HAProxy -> gateway snapshot -> Redis Lua -> catalog
 ```
 
-The configured simulation policy allows five requests per client in each
-epoch-aligned ten-second window across all replicas combined. Redis is the
-authoritative runtime state in distributed mode. Explicit `IN_MEMORY` mode is
-retained for single-instance education and comparison, never as fallback.
+PostgreSQL is authoritative for policy identity, versions, lifecycle, audit,
+and active-set revision. Redis is authoritative for fixed-window counters and
+expiration; Pub/Sub carries invalidation metadata only. Each gateway serves
+requests from one atomically replaceable immutable snapshot and never queries
+PostgreSQL on the proxy request path.
 
 ## Prerequisites
 
@@ -43,10 +44,21 @@ Run the complete local CI-equivalent workflow:
 scripts/verify.sh
 ```
 
-Start HAProxy, three gateways, Redis, and catalog:
+Generate local-only credentials and start HAProxy, three gateways, Redis,
+PostgreSQL, and the catalog service:
 
 ```bash
+export ADMIN_BEARER_TOKEN="$(openssl rand -hex 32)"
+export POSTGRES_PASSWORD="$(openssl rand -hex 32)"
 docker compose up --build
+```
+
+No admin or PostgreSQL password has a source-controlled default. Flyway applies
+the forward-only schema on gateway startup. An empty active policy set is valid,
+so create the catalog draft and activate version 1 explicitly:
+
+```bash
+scripts/bootstrap-catalog-policy.sh
 ```
 
 Then call the proxy with a trusted local simulation identity:
@@ -56,18 +68,34 @@ curl --header 'X-Client-Id: demo-client' \
   http://localhost:8080/proxy/catalog/items
 ```
 
+Inspect one replica's sanitized loaded revision with the development token:
+
+```bash
+curl --header "Authorization: Bearer ${ADMIN_BEARER_TOKEN}" \
+  http://localhost:8081/internal/policy-snapshot
+```
+
+The admin API is under `/admin/api/v1/policies`; its exact strict request and
+response contract is in `contracts/admin-api.openapi.yaml`. The shared bearer
+token is deliberately development-only: it has no user identities, roles,
+rotation protocol, or production secret-management guarantees.
+
 Stop and remove the local environment:
 
 ```bash
 docker compose down --volumes --remove-orphans
 ```
 
-Run the distributed and Redis-failure acceptance proofs:
+Run the retained and Phase 4 acceptance proofs:
 
 ```bash
 scripts/phase3-e2e.sh
 scripts/phase3-redis-failure-e2e.sh
+scripts/phase4-e2e.sh
+scripts/phase4-publication-failure-e2e.sh
 ```
 
-See `docs/COMMANDS.md` for verified commands and the active Phase 3 ExecPlan
-for design, TDD, coverage, concurrency, and container evidence.
+The Phase 4 suites prove dynamic activation without gateway restart, convergence
+across three replicas, version-isolated Redis keys, missed-Pub/Sub recovery,
+startup reload, invalid-activation safety, and publication-failure recovery.
+See `docs/COMMANDS.md` and the completed Phase 4 ExecPlan for exact evidence.

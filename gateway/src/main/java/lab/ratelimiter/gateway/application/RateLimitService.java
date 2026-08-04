@@ -11,17 +11,24 @@ import reactor.core.publisher.Mono;
 public final class RateLimitService {
 
   private final FixedWindowStateAdapter stateAdapter;
-  private final FailureMode failureMode;
+  private final FailureMode legacyFailureMode;
+
+  public RateLimitService(FixedWindowStateAdapter stateAdapter) {
+    this.stateAdapter = Objects.requireNonNull(stateAdapter, "stateAdapter");
+    this.legacyFailureMode = null;
+  }
 
   public RateLimitService(FixedWindowStateAdapter stateAdapter, FailureMode failureMode) {
     this.stateAdapter = Objects.requireNonNull(stateAdapter, "stateAdapter");
-    this.failureMode = Objects.requireNonNull(failureMode, "failureMode");
+    this.legacyFailureMode = Objects.requireNonNull(failureMode, "failureMode");
   }
 
   public Mono<RateLimitEvaluation> evaluate(
       CompiledPolicy compiledPolicy, LimiterIdentity identity) {
     Objects.requireNonNull(compiledPolicy, "compiledPolicy");
     Objects.requireNonNull(identity, "identity");
+    FailureMode effectiveFailureMode =
+        legacyFailureMode == null ? compiledPolicy.failureMode() : legacyFailureMode;
     return stateAdapter
         .decide(compiledPolicy.policy(), identity, new RateLimitRequest(1))
         .map(
@@ -32,11 +39,13 @@ public final class RateLimitService {
                     Optional.of(result.resetAfter()),
                     result.stateBackend(),
                     result.redisOutcome(),
-                    failureMode))
-        .onErrorResume(RedisStateException.class, this::failureEvaluation);
+                    effectiveFailureMode))
+        .onErrorResume(
+            RedisStateException.class, failure -> failureEvaluation(failure, effectiveFailureMode));
   }
 
-  private Mono<RateLimitEvaluation> failureEvaluation(RedisStateException failure) {
+  private Mono<RateLimitEvaluation> failureEvaluation(
+      RedisStateException failure, FailureMode failureMode) {
     RateLimitOutcome outcome =
         failureMode == FailureMode.FAIL_OPEN
             ? RateLimitOutcome.DEGRADED_ALLOW

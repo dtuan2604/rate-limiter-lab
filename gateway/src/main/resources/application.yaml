@@ -5,6 +5,15 @@ spring:
     redis:
       connect-timeout: 500ms
       timeout: ${REDIS_COMMAND_TIMEOUT:750ms}
+  r2dbc:
+    url: ${POSTGRES_R2DBC_URL}
+    username: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+  flyway:
+    url: ${POSTGRES_JDBC_URL}
+    user: ${POSTGRES_USER}
+    password: ${POSTGRES_PASSWORD}
+    locations: classpath:db/migration
 
 logging:
   structured:
@@ -20,15 +29,17 @@ rate-limiter:
     instance-id: ${GATEWAY_INSTANCE_ID:local-gateway}
     expose-instance-header: ${EXPOSE_GATEWAY_INSTANCE_HEADER:false}
     redis-command-timeout: 750ms
-    policies:
-      - id: catalog-client-fixed-window
-        version: 1
-        route-id: catalog.items
-        path: /proxy/catalog/items
-        method: GET
-        algorithm: FIXED_WINDOW
-        limit: 5
-        window: 10s
+  policy-control:
+    enabled: ${POLICY_CONTROL_ENABLED:true}
+    admin-bearer-token: ${ADMIN_BEARER_TOKEN}
+    admin-actor: ${ADMIN_PRINCIPAL:local-admin}
+    event-channel: rate-limiter:policy-events:v1
+    database-timeout: 5s
+    outbox-poll-interval: ${POLICY_OUTBOX_POLL_INTERVAL:250ms}
+    outbox-lease-duration: 10s
+    reconciliation-interval: ${POLICY_RECONCILIATION_INTERVAL:30s}
+    maximum-event-bytes: 4096
+    acceptance-controls-enabled: ${POLICY_ACCEPTANCE_CONTROLS_ENABLED:false}
 
 management:
   endpoints:

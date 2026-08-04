@@ -5,11 +5,16 @@ x-gateway: &gateway
     context: .
     dockerfile: gateway/Dockerfile
   environment:
+    ADMIN_BEARER_TOKEN: ${ADMIN_BEARER_TOKEN:?ADMIN_BEARER_TOKEN is required}
     CATALOG_BASE_URL: http://mock-catalog-service:8000
     EXPOSE_GATEWAY_INSTANCE_HEADER: "true"
     RATE_LIMIT_FAILURE_MODE: ${RATE_LIMIT_FAILURE_MODE:-FAIL_CLOSED}
     RATE_LIMIT_STATE_BACKEND: REDIS
     REDIS_COMMAND_TIMEOUT: 750ms
+    POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+    POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+    POSTGRES_R2DBC_URL: r2dbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+    POSTGRES_USER: ${POSTGRES_USER:-rate_limiter}
     SPRING_DATA_REDIS_CONNECT_TIMEOUT: 500ms
     SPRING_DATA_REDIS_HOST: redis
     SPRING_DATA_REDIS_PORT: "6379"
@@ -17,7 +22,9 @@ x-gateway: &gateway
     mock-catalog-service:
       condition: service_started
     redis:
-      condition: service_started
+      condition: service_healthy
+    postgres:
+      condition: service_healthy
   healthcheck:
     test:
       [
@@ -64,12 +71,34 @@ services:
       retries: 20
       start_period: 3s
 
+  postgres:
+    image: postgres:17.6-alpine
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-rate_limiter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_USER: ${POSTGRES_USER:-rate_limiter}
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-rate_limiter} -d ${POSTGRES_DB:-rate_limiter}"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+      start_period: 5s
+
   gateway-1:
     <<: *gateway
     environment:
+      ADMIN_BEARER_TOKEN: ${ADMIN_BEARER_TOKEN:?ADMIN_BEARER_TOKEN is required}
       CATALOG_BASE_URL: http://mock-catalog-service:8000
       EXPOSE_GATEWAY_INSTANCE_HEADER: "true"
       GATEWAY_INSTANCE_ID: gateway-1
+      POLICY_ACCEPTANCE_CONTROLS_ENABLED: ${POLICY_ACCEPTANCE_CONTROLS_ENABLED:-false}
+      POLICY_RECONCILIATION_INTERVAL: ${POLICY_RECONCILIATION_INTERVAL:-30s}
+      POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_R2DBC_URL: r2dbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+      POSTGRES_USER: ${POSTGRES_USER:-rate_limiter}
       RATE_LIMIT_FAILURE_MODE: ${RATE_LIMIT_FAILURE_MODE:-FAIL_CLOSED}
       RATE_LIMIT_STATE_BACKEND: REDIS
       REDIS_COMMAND_TIMEOUT: 750ms
@@ -82,9 +111,16 @@ services:
   gateway-2:
     <<: *gateway
     environment:
+      ADMIN_BEARER_TOKEN: ${ADMIN_BEARER_TOKEN:?ADMIN_BEARER_TOKEN is required}
       CATALOG_BASE_URL: http://mock-catalog-service:8000
       EXPOSE_GATEWAY_INSTANCE_HEADER: "true"
       GATEWAY_INSTANCE_ID: gateway-2
+      POLICY_ACCEPTANCE_CONTROLS_ENABLED: ${POLICY_ACCEPTANCE_CONTROLS_ENABLED:-false}
+      POLICY_RECONCILIATION_INTERVAL: ${POLICY_RECONCILIATION_INTERVAL:-30s}
+      POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_R2DBC_URL: r2dbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+      POSTGRES_USER: ${POSTGRES_USER:-rate_limiter}
       RATE_LIMIT_FAILURE_MODE: ${RATE_LIMIT_FAILURE_MODE:-FAIL_CLOSED}
       RATE_LIMIT_STATE_BACKEND: REDIS
       REDIS_COMMAND_TIMEOUT: 750ms
@@ -97,9 +133,16 @@ services:
   gateway-3:
     <<: *gateway
     environment:
+      ADMIN_BEARER_TOKEN: ${ADMIN_BEARER_TOKEN:?ADMIN_BEARER_TOKEN is required}
       CATALOG_BASE_URL: http://mock-catalog-service:8000
       EXPOSE_GATEWAY_INSTANCE_HEADER: "true"
       GATEWAY_INSTANCE_ID: gateway-3
+      POLICY_ACCEPTANCE_CONTROLS_ENABLED: ${POLICY_ACCEPTANCE_CONTROLS_ENABLED:-false}
+      POLICY_RECONCILIATION_INTERVAL: ${POLICY_RECONCILIATION_INTERVAL:-30s}
+      POSTGRES_JDBC_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required}
+      POSTGRES_R2DBC_URL: r2dbc:postgresql://postgres:5432/${POSTGRES_DB:-rate_limiter}
+      POSTGRES_USER: ${POSTGRES_USER:-rate_limiter}
       RATE_LIMIT_FAILURE_MODE: ${RATE_LIMIT_FAILURE_MODE:-FAIL_CLOSED}
       RATE_LIMIT_STATE_BACKEND: REDIS
       REDIS_COMMAND_TIMEOUT: 750ms
@@ -135,3 +178,6 @@ services:
       timeout: 3s
       retries: 30
       start_period: 10s
+
+volumes:
+  postgres-data:

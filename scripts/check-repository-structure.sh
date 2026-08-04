@@ -14,10 +14,16 @@ required_files=(
   "gateway/build.gradle.kts"
   "gateway/src/main/java/lab/ratelimiter/gateway/GatewayApplication.java"
   "gateway/src/main/resources/redis/fixed-window-v1.lua"
+  "gateway/src/main/resources/db/migration/V1__policy_control_plane.sql"
+  "contracts/policy-event.schema.json"
+  "contracts/policy-snapshot.schema.json"
   "deploy/haproxy/haproxy.cfg"
   "compose.yaml"
   "scripts/phase3-e2e.sh"
   "scripts/phase3-redis-failure-e2e.sh"
+  "scripts/bootstrap-catalog-policy.sh"
+  "scripts/phase4-e2e.sh"
+  "scripts/phase4-publication-failure-e2e.sh"
   "traffic-simulator/pyproject.toml"
   "traffic-simulator/src/rate_limiter_traffic_simulator/__init__.py"
   "mock-services/pyproject.toml"
@@ -41,4 +47,4 @@ if (( ${#missing[@]} > 0 )); then
   exit 1
 fi
 
-printf 'Phase 3 repository structure is discoverable.\n'
+printf 'Phase 4 repository structure is discoverable.\n'

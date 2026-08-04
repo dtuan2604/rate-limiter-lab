@@ -317,13 +317,17 @@ server time. Run three stateless gateways behind a non-sticky load balancer and
 prove one five-request limit is shared globally, including restart, scale,
 unhealthy-replica, and Redis failure scenarios.
 
-### Phase 4 — remaining distributed algorithms
+### Phase 4 — policy control plane
 
-Implement and verify one algorithm at a time, starting with token bucket, then sliding counter, sliding log, and finally leaky-bucket policing.
+Add PostgreSQL versioning, admin API, policy activation, Pub/Sub invalidation,
+periodic reconciliation, immutable per-request snapshots, and per-replica
+snapshot visibility. Runtime fixed-window state remains in Redis and versioned
+policy changes intentionally start fresh enforcement state.
 
-### Phase 5 — policy control plane
+### Phase 5 — remaining distributed algorithms
 
-Add PostgreSQL versioning, admin API, policy activation, Pub/Sub invalidation, polling reconciliation, and per-replica snapshot visibility.
+Implement and verify one algorithm at a time, starting with token bucket, then
+sliding counter, sliding log, and finally leaky-bucket policing.
 
 ### Phase 6 — traffic simulator and all mock services
 

@@ -5,7 +5,10 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repository_root}"
 
-expected_services=$'gateway-1\ngateway-2\ngateway-3\nload-balancer\nmock-catalog-service\nredis'
+export ADMIN_BEARER_TOKEN="${ADMIN_BEARER_TOKEN:-phase3-$(openssl rand -hex 24)}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-phase3-$(openssl rand -hex 24)}"
+
+expected_services=$'gateway-1\ngateway-2\ngateway-3\nload-balancer\nmock-catalog-service\npostgres\nredis'
 actual_services="$(docker compose config --services | LC_ALL=C sort)"
 if [[ "${actual_services}" != "${expected_services}" ]]; then
   printf 'Phase 3 Compose services differ from the required topology:\n%s\n' \
@@ -108,8 +111,19 @@ if grep -Eiq 'cookie|stick-table|stick on|balance[[:space:]]+source' deploy/hapr
 fi
 
 docker compose up --build --detach --wait --wait-timeout 300
-for service in redis mock-catalog-service gateway-1 gateway-2 gateway-3 load-balancer; do
+for service in redis postgres mock-catalog-service gateway-1 gateway-2 gateway-3 load-balancer; do
   wait_for_healthy "${service}"
+done
+scripts/bootstrap-catalog-policy.sh
+for port in 8081 8082 8083; do
+  attempts=100
+  until curl --fail --silent --header "Authorization: Bearer ${ADMIN_BEARER_TOKEN}" \
+    "http://localhost:${port}/internal/policy-snapshot" \
+    | jq --exit-status '.activePolicies[0].version == 1' >/dev/null; do
+    sleep 0.1
+    attempts=$((attempts - 1))
+    (( attempts > 0 ))
+  done
 done
 
 # Scenario 1: one five-request limit is shared globally across three replicas.

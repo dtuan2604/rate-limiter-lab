@@ -5,6 +5,9 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repository_root}"
 
+export ADMIN_BEARER_TOKEN="${ADMIN_BEARER_TOKEN:-phase3-failure-$(openssl rand -hex 24)}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-phase3-failure-$(openssl rand -hex 24)}"
+
 evidence_directory="$(mktemp -d /tmp/rate-limiter-phase3-redis-failure.XXXXXX)"
 cleanup_environment() {
   docker compose unpause redis >/dev/null 2>&1 || true
@@ -82,7 +85,17 @@ start_environment() {
   local mode="$1"
   RATE_LIMIT_FAILURE_MODE="${mode}" \
     docker compose up --detach --wait --wait-timeout 240
+  CATALOG_POLICY_FAILURE_MODE="${mode}" scripts/bootstrap-catalog-policy.sh
   for port in 8081 8082 8083; do
+    local attempts=100
+    until curl --fail --silent \
+      --header "Authorization: Bearer ${ADMIN_BEARER_TOKEN}" \
+      "http://localhost:${port}/internal/policy-snapshot" \
+      | jq --exit-status '.activePolicies[0].version == 1' >/dev/null; do
+      sleep 0.1
+      attempts=$((attempts - 1))
+      (( attempts > 0 ))
+    done
     wait_for_readiness "${port}" 200
   done
 }

@@ -115,8 +115,8 @@ The key and ten-integer script contract are specified by ADRs 0012 and 0013.
 Distributed configuration accepts limits 1..1,000,000 and windows 1 ms..24 h
 so all Lua arithmetic stays within exact integer range. Policy versions,
 routes, and normalized hashed identities have independent state. Request cost
-remains exactly one because the Phase 3 external static policy does not expose
-variable costs.
+remains exactly one because the Phase 4 persisted external policy contract does
+not expose variable costs.
 
 Intentional differences from the in-memory reference are Redis server time,
 string counter storage, exact Redis key expiry, and clock rollback behavior.

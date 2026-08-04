@@ -7,7 +7,7 @@ The platform separates a high-frequency data plane from a lower-frequency contro
 ```text
                                     CONTROL PLANE
                          ┌────────────────────────────┐
-                         │ Admin Portal and Admin API │
+                         │ Admin client and Admin API │
                          └──────────────┬─────────────┘
                                         │
                                         v
@@ -79,11 +79,11 @@ Forbidden in distributed mode:
 
 ## 3. Request path
 
-The implemented Phase 3 catalog path is:
+The implemented Phase 4 catalog path is:
 
 ```text
 client -> HAProxy -> gateway-1|gateway-2|gateway-3
-       -> static catalog policy -> fixed-window state adapter
+       -> captured PostgreSQL-loaded snapshot -> fixed-window state adapter
        -> Redis Lua -> mock catalog service
 ```
 
@@ -163,12 +163,14 @@ Activation sequence:
 
 1. Admin API validates a draft against JSON Schema and semantic rules.
 2. PostgreSQL transaction stores the immutable version and marks it active.
-3. After commit, the admin service publishes `{policyId, version}`.
-4. Each gateway subscriber fetches the authoritative active set or changed record.
-5. Gateway validates, compiles, and builds a complete new immutable snapshot.
-6. One atomic reference swap makes the snapshot visible to new requests.
-7. In-flight requests continue with their captured previous snapshot.
-8. A periodic reconciliation loop compares a policy-set generation/version with PostgreSQL and repairs missed notifications.
+3. The same transaction inserts a versioned minimal event in the durable outbox.
+4. A leased outbox worker publishes only after commit.
+5. Each gateway subscriber fetches the authoritative active set.
+6. Gateway validates, compiles, and builds a complete new immutable snapshot.
+7. One atomic reference swap makes the snapshot visible to new requests.
+8. In-flight requests continue with their captured previous snapshot.
+9. Periodic reconciliation compares `policy_set_state.revision` with PostgreSQL
+   and repairs missed notifications through the same refresh coordinator.
 
 A failed reload leaves the previous valid snapshot active and emits a health degradation, metric, and structured error.
 
@@ -186,14 +188,15 @@ The automated scaling experiment must verify:
 
 The experiment should run once with Redis state and once with intentionally selected in-memory mode to demonstrate the failure of per-node limiting.
 
-### Phase 3 development topology
+### Phase 4 development topology
 
 Compose runs HAProxy on 8080, catalog observation on 8101, and direct gateway
 ports 8081..8083. HAProxy uses round-robin and active readiness checks with no
-session affinity. Redis and HAProxy images are pinned. Compose ordering waits
-only for containers to start; application health establishes dependency
-readiness. `X-Gateway-Instance` is enabled only for this development topology
-and does not enter identity construction.
+session affinity. Redis, PostgreSQL, and HAProxy images are pinned. PostgreSQL
+uses a persistent development volume and a health check. Gateways wait for
+healthy Redis/PostgreSQL containers and do not report ready until Flyway and the
+initial authoritative snapshot load succeed. `X-Gateway-Instance` is enabled
+only for this development topology and does not enter identity construction.
 
 | Property | `IN_MEMORY` | `REDIS` |
 | --- | --- | --- |
@@ -213,18 +216,27 @@ cross-region clock strategy, or authentication infrastructure.
 ### Redis unavailable
 
 Apply explicit `FAIL_OPEN` or `FAIL_CLOSED`. Emit a distinct decision reason.
-Never use local state as a silent substitute. Phase 3 defaults to fail closed:
-return 503 and readiness DOWN without forwarding. Fail open forwards with a
-degraded header, omits capacity metadata, and remains UP with degraded health
-details.
+Never use local state as a silent substitute. The matched Phase 4 policy owns
+the failure mode. A Redis outage makes readiness DOWN when any active policy is
+fail-closed; an empty snapshot or all-fail-open snapshot remains UP/degraded.
+Fail closed returns 503 without forwarding. Fail open forwards with a degraded
+header and omits capacity metadata.
 
 ### PostgreSQL unavailable during normal proxying
 
 Existing valid gateway snapshots continue to serve. Policy updates fail cleanly. Reconciliation health degrades.
 
+At startup, migration failure, PostgreSQL unavailability, a missing authoritative
+revision row, or invalid active policy data fails initialization. The gateway
+does not fall back to YAML. A migrated database with no active rows installs an
+empty revision-zero snapshot; unmatched proxy requests keep the structured 404.
+
 ### Pub/Sub unavailable
 
-Periodic polling restores convergence. Policy activation remains committed, but the admin UI must show propagation status rather than falsely claiming immediate convergence.
+Periodic reconciliation restores convergence. Policy activation remains
+committed and its outbox row is retained for retry. The protected internal
+snapshot reports `REDIS_POLICY_SUBSCRIPTION_UNAVAILABLE`; it never claims
+instantaneous propagation.
 
 ### Backend unavailable
 
@@ -257,3 +269,26 @@ Every request decision should make these facts reconstructable without logging s
 - backend outcome and latency if forwarded.
 
 Metric names and labels must be centrally defined and tested to prevent accidental cardinality growth.
+
+Policy-control logs use sanitized structured fields including `policyEventId`,
+`policyEventType`, `requestedPolicyVersion`, `installedPolicyVersion`,
+`snapshotRevision`, `reloadTrigger`, `reloadOutcome`,
+`reconciliationOutcome`, `databaseOutcome`, `publicationOutcome`, and
+`convergenceDelay`. Client IDs and bearer tokens are never logged.
+
+## 12. Consistency and convergence
+
+Activation is eventually consistent, not a global atomic cutover:
+
+```text
+PostgreSQL commit -> outbox claim/publication -> event receipt
+                  -> authoritative reload -> atomic snapshot installation
+```
+
+The outbox polls every 250 ms by default. Local event convergence targets five
+seconds; reconciliation runs every 30 seconds by default and bounds a missed
+event's recovery delay when PostgreSQL is available. These intervals are
+configurable. During the interval, replicas may use different valid snapshots.
+Each replica exposes its revision and versions, ignores old events, and retains
+its previous snapshot if a refresh fails. At-least-once events may duplicate;
+exactly-once delivery and strong consistency are not claimed.

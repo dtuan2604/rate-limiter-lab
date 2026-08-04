@@ -7,6 +7,7 @@ record RateLimitErrorResponse(
     String error,
     String message,
     String policy,
+    long policyVersion,
     long retryAfterMilliseconds,
     String correlationId) {
 

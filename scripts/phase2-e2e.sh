@@ -5,10 +5,13 @@ set -euo pipefail
 repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${repository_root}"
 
-expected_services=$'catalog\ngateway'
+export ADMIN_BEARER_TOKEN="${ADMIN_BEARER_TOKEN:-phase2-$(openssl rand -hex 24)}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-phase2-$(openssl rand -hex 24)}"
+
+expected_services=$'gateway-1\ngateway-2\ngateway-3\nload-balancer\nmock-catalog-service\npostgres\nredis'
 actual_services="$(docker compose config --services | LC_ALL=C sort)"
 if [[ "${actual_services}" != "${expected_services}" ]]; then
-  printf 'Phase 2 Compose must contain only catalog and gateway; observed:\n%s\n' \
+  printf 'Retained Phase 2 scenario observed an unexpected topology:\n%s\n' \
     "${actual_services}" >&2
   exit 1
 fi
@@ -20,10 +23,45 @@ cleanup() {
 }
 trap cleanup EXIT
 
+wait_for_policy_version() {
+  local port="$1"
+  local expected_version="$2"
+  local attempts=100
+  while (( attempts > 0 )); do
+    if curl --fail --silent --show-error \
+      --header "Authorization: Bearer ${ADMIN_BEARER_TOKEN}" \
+      "http://localhost:${port}/internal/policy-snapshot" \
+      | jq --exit-status \
+        ".activePolicies[]? | select(.policyId == \"catalog-client-fixed-window\" and .version == ${expected_version})" \
+        >/dev/null; then
+      return 0
+    fi
+    sleep 0.1
+    attempts=$((attempts - 1))
+  done
+  printf 'Gateway port %s did not install policy version %s.\n' \
+    "${port}" "${expected_version}" >&2
+  return 1
+}
+
+await_fresh_redis_window() {
+  local redis_time
+  redis_time="$(docker compose exec --no-TTY redis redis-cli --raw TIME | tr -d '\r')"
+  local redis_seconds
+  redis_seconds="$(printf '%s\n' "${redis_time}" | sed -n '1p')"
+  local redis_microseconds
+  redis_microseconds="$(printf '%s\n' "${redis_time}" | sed -n '2p')"
+  local now_milliseconds=$((redis_seconds * 1000 + redis_microseconds / 1000))
+  local remaining=$((10000 - now_milliseconds % 10000))
+  if (( remaining < 9500 )); then
+    sleep "$(awk -v milliseconds="${remaining}" 'BEGIN { print milliseconds / 1000 + 0.2 }')"
+  fi
+}
+
 docker compose config --quiet
 docker compose up --build --detach --wait --wait-timeout 240
 
-for service in catalog gateway; do
+for service in gateway-1 gateway-2 gateway-3 load-balancer mock-catalog-service postgres redis; do
   container_id="$(docker compose ps --quiet "${service}")"
   health="$(docker inspect --format '{{.State.Health.Status}}' "${container_id}")"
   if [[ "${health}" != "healthy" ]]; then
@@ -32,6 +70,12 @@ for service in catalog gateway; do
   fi
 done
 
+scripts/bootstrap-catalog-policy.sh
+for port in 8081 8082 8083; do
+  wait_for_policy_version "${port}" 1
+done
+
+await_fresh_redis_window
 curl --fail --silent --show-error \
   --request POST \
   http://localhost:8101/_test/request-count/reset \

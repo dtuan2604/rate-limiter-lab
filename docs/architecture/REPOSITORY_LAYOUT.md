@@ -29,6 +29,8 @@ rate-limiter-lab/
 │   └── CODEX_PROMPTS.md
 ├── contracts/
 │   ├── policy.schema.json
+│   ├── policy-event.schema.json
+│   ├── policy-snapshot.schema.json
 │   ├── traffic-scenario.schema.json
 │   ├── admin-api.openapi.yaml
 │   └── error.schema.json
@@ -61,7 +63,9 @@ rate-limiter-lab/
 └── scripts/
     ├── verify.sh
     ├── run-demo.sh
-    ├── seed-policies.sh
+    ├── bootstrap-catalog-policy.sh
+    ├── phase4-e2e.sh
+    ├── phase4-publication-failure-e2e.sh
     └── run-experiments.sh
 ```
 

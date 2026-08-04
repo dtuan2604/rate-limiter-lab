@@ -1,6 +1,8 @@
 # Verified Repository Commands
 
-All commands below run from the repository root unless a different working directory is stated. Phase 3 commands were executed and inspected on 2026-08-02 on macOS arm64.
+All commands below run from the repository root unless a different working
+directory is stated. Phase 4 commands were executed and inspected on 2026-08-03
+on macOS arm64.
 
 ## Prerequisites
 
@@ -35,7 +37,7 @@ scripts/check-repository-structure.sh
 ```
 
 Verifies the pinned toolchains, executable-codebase skeletons, Lua resource,
-HAProxy configuration, Compose topology, and Phase 3 acceptance scripts exist.
+HAProxy configuration, Compose topology, and retained/Phase 4 acceptance scripts.
 
 ### Formatting
 
@@ -59,7 +61,9 @@ Runs Java Checkstyle, Python Ruff, strict mypy, frontend ESLint, and strict Type
 scripts/test.sh
 ```
 
-Runs the gateway, traffic simulator, each mock service independently, all contracts, and the portal. Exit 0 was observed; the gateway reported 140 tests with no failures, errors, or skips.
+Runs the gateway, traffic simulator, each mock service independently, all
+contracts, and the portal. The gateway suite includes pinned PostgreSQL and
+Redis Testcontainers; Docker must be running.
 
 ### Independent coverage gates
 
@@ -70,9 +74,9 @@ scripts/coverage.sh
 Runs JaCoCo plus independent pytest-cov and Vitest gates. The script exports
 raw Python coverage data and separately enforces line, statement, branch, and
 function percentages so a combined score cannot mask a deficient metric. Exit
-0 was observed. Gateway coverage reported 959/975 lines (98.36%), 316/338
-branches (93.49%), and 195/196 methods (99.49%). Traffic simulator, catalog,
-orders, payments, and portal each
+0 was observed. Phase 4 gateway coverage reported 2,405/2,452 lines (98.08%),
+609/660 branches (92.27%), and 502/522 methods (96.17%). Traffic simulator,
+catalog, orders, payments, and portal each
 reported 100% for every supported metric.
 
 ### Application artifact builds
@@ -93,12 +97,12 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:jacocoTestReport :g
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:build --no-daemon
 ```
 
-All returned exit 0. The 140-test gateway suite includes Phase 1 algorithms,
-static policy and identity behavior, both fixed-window state adapters,
-real-Redis Lua/TTL/expiry/cache-miss tests, 20 repetitions of 100 concurrent
-calls through three Lettuce clients, failure modes, structured logging,
-reactive HTTP forwarding, and dependency-aware readiness. PostgreSQL remains
-out of scope.
+All returned exit 0. The gateway suite includes Phase 1 algorithms, atomic
+fixed-window adapters, 20 repetitions of 100 concurrent calls through three
+Lettuce clients, real PostgreSQL migration/constraints/transactions/concurrent
+activation, strict admin/auth contracts, outbox/Pub/Sub/reconciliation,
+immutable snapshot concurrency, structured logging, reactive forwarding, and
+per-policy dependency-aware readiness.
 
 ## Python traffic simulator
 
@@ -125,7 +129,7 @@ conda run -n rate-limiter python -m pytest mock-services/tests/test_payments.py 
 
 All returned exit 0 and each reported 100%. The catalog suite contains 11
 tests; orders and payments remain unchanged health-only foundations and are not
-started by Phase 3 Compose.
+started by the Phase 4 Compose topology.
 
 Shared static and package checks:
 
@@ -163,16 +167,16 @@ Equivalent focused command:
 conda run -n rate-limiter python -m pytest contracts/tests
 ```
 
-Both returned exit 0 with 11 passing tests. Valid token-bucket policy, empty
-traffic v0, strict gateway errors including state-unavailable 503, and OpenAPI examples pass;
-invalid examples fail at asserted stable paths.
+Both returned exit 0 with 13 passing tests. Strict Phase 4 fixed-window policy,
+event, snapshot, traffic, error, and populated admin OpenAPI examples pass;
+invalid/unknown fields fail at asserted stable paths.
 
 ## Containers
 
 ### Compose and Dockerfile validation
 
 ```bash
-docker compose config --quiet
+ADMIN_BEARER_TOKEN=test-only POSTGRES_PASSWORD=test-only docker compose config --quiet
 scripts/lint-dockerfiles.sh
 ```
 
@@ -187,7 +191,8 @@ docker compose run --rm --no-deps load-balancer \
 ```
 
 The gateway/catalog images build successfully. The pinned HAProxy 3.0.8 image
-validates the checked-in configuration; Redis 7.4.2 and HAProxy use pinned tags.
+validates the checked-in configuration; Redis 7.4.2, PostgreSQL 17.6, and
+HAProxy use pinned tags.
 
 ### Health and smoke
 
@@ -195,15 +200,18 @@ validates the checked-in configuration; Redis 7.4.2 and HAProxy use pinned tags.
 scripts/container-smoke.sh
 ```
 
-Builds and starts HAProxy, three gateways, Redis, and catalog; waits for health;
-asserts exactly three gateways; checks load-balanced readiness, Redis, and
-catalog; and shuts down through a trap.
+Generates ephemeral admin/PostgreSQL credentials; builds and starts HAProxy,
+three gateways, Redis, PostgreSQL, and catalog; waits for health; bootstraps the
+catalog policy through the admin API; checks each dependency; and shuts down
+through a trap.
 
 ### End-to-end acceptance
 
 ```bash
 scripts/phase3-e2e.sh
 scripts/phase3-redis-failure-e2e.sh
+scripts/phase4-e2e.sh
+scripts/phase4-publication-failure-e2e.sh
 ```
 
 The first script proves one global five-request limit through three replicas,
@@ -214,9 +222,23 @@ forwarding/degraded metadata, fail-closed 503/readiness/HAProxy removal, exact
 catalog counts, no local fallback, and recovery from surviving Redis state.
 Both exited 0 and cleaned up containers and volumes.
 
+`phase4-e2e.sh` proves version 1 five-of-six behavior, version 2 two-of-three
+activation without container restart, multiple gateway IDs, equal replica
+snapshot revisions, separate versioned Redis keys with version 1 retained,
+missed-event reconciliation, restart loading from PostgreSQL, and invalid-update
+stability. `phase4-publication-failure-e2e.sh` stops Redis after commit, proves
+the outbox retry is retained, observes reconciliation convergence, restores
+Redis, and observes publication complete. Both use bounded polling and cleanup
+traps.
+
+Those Phase 4 scripts passed against the completed propagation implementation
+after the final readiness/subscription-observability refinement. The complete
+`scripts/verify.sh` closeout rerun also passed and cleaned every environment.
+
 ### Destructive cleanup
 
-The local Redis volume/state is disposable. The required cleanup command is:
+The local Redis and PostgreSQL development state is disposable. The required
+cleanup command is:
 
 ```bash
 docker compose down --volumes --remove-orphans
@@ -238,5 +260,5 @@ The complete CI-equivalent entry point is:
 scripts/verify.sh
 ```
 
-The detailed Phase 3 milestone and RED-GREEN-REFACTOR evidence is recorded in
-the active Phase 3 ExecPlan.
+The detailed Phase 4 milestone and RED-GREEN-REFACTOR evidence is recorded in
+the completed Phase 4 ExecPlan.

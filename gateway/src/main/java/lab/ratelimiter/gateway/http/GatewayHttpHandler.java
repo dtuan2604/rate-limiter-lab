@@ -12,7 +12,8 @@ import lab.ratelimiter.gateway.identity.ClientIdentityExtractor;
 import lab.ratelimiter.gateway.identity.LimiterIdentity;
 import lab.ratelimiter.gateway.observability.RateLimitDecisionLogger;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
-import lab.ratelimiter.gateway.policy.StaticPolicySnapshot;
+import lab.ratelimiter.gateway.policy.PolicySnapshot;
+import lab.ratelimiter.gateway.policy.PolicySnapshotStore;
 import lab.ratelimiter.gateway.proxy.CatalogBackendClient;
 import lab.ratelimiter.gateway.proxy.CatalogBackendRequest;
 import lab.ratelimiter.gateway.proxy.CatalogBackendResponse;
@@ -29,7 +30,7 @@ public final class GatewayHttpHandler {
   private static final String CORRELATION_ID = "X-Correlation-Id";
   private static final String GATEWAY_INSTANCE = "X-Gateway-Instance";
   private static final String RATE_LIMIT_DEGRADED = "X-RateLimit-Degraded";
-  private final StaticPolicySnapshot policies;
+  private final PolicySnapshotStore policies;
   private final ClientIdentityExtractor identityExtractor;
   private final RateLimitService rateLimitService;
   private final CatalogBackendClient backendClient;
@@ -38,7 +39,7 @@ public final class GatewayHttpHandler {
   private final RateLimitDecisionLogger decisionLogger;
 
   public GatewayHttpHandler(
-      StaticPolicySnapshot policies,
+      PolicySnapshotStore policies,
       ClientIdentityExtractor identityExtractor,
       RateLimitService rateLimitService,
       CatalogBackendClient backendClient,
@@ -55,7 +56,8 @@ public final class GatewayHttpHandler {
 
   public Mono<ServerResponse> proxyCatalogItems(ServerRequest request) {
     String correlationId = correlationId(request);
-    Optional<CompiledPolicy> matched = policies.match(request.method().name(), request.path());
+    PolicySnapshot captured = policies.current();
+    Optional<CompiledPolicy> matched = captured.match(request.method().name(), request.path());
     if (matched.isEmpty()) {
       return routeNotFound(correlationId);
     }
@@ -126,6 +128,7 @@ public final class GatewayHttpHandler {
             "RATE_LIMIT_EXCEEDED",
             "Request limit exceeded",
             decision.policyId().value(),
+            decision.policyVersion().value(),
             retryAfter.toMillis(),
             correlationId);
     return ServerResponse.status(HttpStatus.TOO_MANY_REQUESTS)

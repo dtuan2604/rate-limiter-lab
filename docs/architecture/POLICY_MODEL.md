@@ -4,46 +4,73 @@
 
 Policies are versioned declarative data, not executable code. PostgreSQL is authoritative. The gateway evaluates only validated immutable active snapshots.
 
-JSON is the canonical API and persistence representation. A checked-in JSON Schema defines structural validity. Additional semantic validation handles cross-field rules.
+JSON is the canonical API representation. PostgreSQL persistence is normalized
+and typed rather than storing an unvalidated JSON map. A checked-in JSON Schema
+defines structural validity; DTO/domain conversion and snapshot compilation
+repeat semantic checks.
 
 ## 2. Conceptual model
 
 ```json
 {
-  "name": "client-orders-token-bucket",
-  "description": "Per-client order creation limit",
+  "policyId": "catalog-client-fixed-window",
+  "name": "Catalog client fixed window",
+  "version": 1,
+  "status": "DRAFT",
+  "revision": 0,
+  "description": "Catalog requests per client and route",
   "priority": 100,
   "match": {
-    "routeIds": ["orders.create"],
-    "methods": ["POST"],
-    "requiredHeaders": {
-      "X-Tenant-Id": "*"
-    }
+    "routeId": "catalog.items",
+    "path": "/proxy/catalog/items",
+    "methods": ["GET"]
   },
   "identity": {
     "components": [
-      {"type": "HEADER", "name": "X-Tenant-Id"},
       {"type": "HEADER", "name": "X-Client-Id"},
-      {"type": "ROUTE_ID"}
+      {"type": "ROUTE"}
     ]
   },
   "algorithm": {
-    "type": "TOKEN_BUCKET",
-    "capacity": 20,
-    "refillTokens": 10,
-    "refillPeriodMilliseconds": 1000,
-    "requestCost": 1
+    "type": "FIXED_WINDOW",
+    "configuration": {
+      "limit": 5,
+      "windowMilliseconds": 10000
+    }
   },
   "failureMode": "FAIL_CLOSED",
-  "response": {
-    "includeRetryAfter": true
-  }
+  "createdAt": "2026-08-03T12:00:00Z",
+  "createdBy": "local-admin",
+  "activatedAt": null,
+  "activatedBy": null
 }
 ```
 
-The implementation may refine field names only through an ADR and schema-first change.
+Phase 4 deliberately supports only exact normalized `/proxy/**` paths, `GET`,
+identity `[HEADER:X-Client-Id, ROUTE]`, and `FIXED_WINDOW`. The persisted
+`ROUTE` component compiles to the existing internal `ROUTE_ID` canonical tag
+and normalized route ID, preserving Redis identity/key compatibility.
 
-## 3. Lifecycle and versioning
+## 3. Relational model
+
+| Table | Responsibility |
+| --- | --- |
+| `policies` | Stable ID/name, creation audit, highest activated version. |
+| `policy_versions` | Lifecycle, exact matcher, algorithm type, failure mode, priority, optimistic revision, lifecycle audit. |
+| `policy_version_methods` | Normalized method members. |
+| `policy_version_identity_components` | Ordered typed identity members. |
+| `fixed_window_configurations` | Typed limit/window subtype for a policy version. |
+| `policy_set_state` | Singleton authoritative active-set revision. |
+| `policy_audit` | Append-only action, actor, correlation, state change, validation outcome. |
+| `policy_event_outbox` | Durable publication intent, lease, attempt, retry, and outcome metadata. |
+
+The V1 Flyway migration is forward-only. A partial unique index enforces at
+most one active version per policy. Check constraints bound values and supported
+enums. Triggers reject definition, method, identity, and fixed-window mutations
+after first activation, including after disable/archive. Future algorithms use
+new typed subtype tables instead of nullable columns or runtime maps.
+
+## 4. Lifecycle and versioning
 
 Policy identity and version are separate:
 
@@ -63,9 +90,28 @@ DISABLED
 ARCHIVED
 ```
 
-Database constraints must prevent ambiguous active versions for a policy where the intended model allows only one.
+The exact transition table is:
 
-## 4. Validation layers
+| Current | Operation | Result | Rule |
+| --- | --- | --- | --- |
+| none | create | DRAFT | Creates the stable row and explicit first version; never activates. |
+| DRAFT | update | DRAFT | Full replacement requires matching `If-Match`; revision increments. |
+| DRAFT | activate | ACTIVE | Must validate and not be older than the highest activated version. |
+| DRAFT | archive | ARCHIVED | Does not change active-set revision or emit an event. |
+| ACTIVE | disable | DISABLED | Removes it from the active set and emits `POLICY_DISABLED`. |
+| DISABLED | activate | ACTIVE | Only the latest previously activated version may be re-enabled. |
+| DISABLED | archive | ARCHIVED | Already inactive, so no active-set event. |
+| ARCHIVED | restore | DRAFT | Applies only when the version has never been active. |
+| ARCHIVED | restore | DISABLED | Previously active definitions remain immutable. |
+
+Every unlisted transition is rejected with `409 INVALID_POLICY_TRANSITION`.
+Active definitions cannot be updated, archived, restored, or reactivated.
+Archival requires disable first. Archived versions require explicit restore.
+Concurrent activation locks the stable row; monotonic highest-version checking
+makes versions 2 and 3 deterministically converge on version 3 regardless of
+lock order.
+
+## 5. Validation layers
 
 ### Structural validation
 
@@ -73,32 +119,35 @@ The JSON Schema rejects missing fields, unknown fields where appropriate, incorr
 
 ### Semantic validation
 
-Examples:
+Phase 4 bounds and rules are:
 
-- token refill values and periods must be positive;
-- request cost cannot exceed allowed configured bounds;
-- queue settings are invalid for algorithms that do not queue;
-- source-IP identity requires trusted-proxy configuration to use forwarding headers;
-- route IDs must exist;
-- header names must be allowed and case-normalized;
-- sliding-log maximum entries must be present and bounded;
-- failure mode must be explicit;
-- unsupported algorithm options are rejected rather than ignored.
+- policy ID is 1..128 UTF-8 bytes; name is 1..128 characters;
+- description is optional and at most 1,024 characters;
+- version is a positive `long`; optimistic revision is nonnegative;
+- route ID uses normalized dotted identifiers and path is one normalized exact
+  absolute `/proxy/**` path no longer than 512 UTF-8 bytes;
+- methods are exactly `GET` once;
+- identity is exactly `HEADER:X-Client-Id` followed by `ROUTE`;
+- algorithm is `FIXED_WINDOW`, limit is 1..1,000,000, and window is
+  1..86,400,000 whole milliseconds;
+- failure mode is `FAIL_OPEN` or `FAIL_CLOSED`; priority is 0..1,000;
+- duplicate identity/method members, unsupported values, and unknown JSON
+  fields are rejected.
 
 ### Compilation validation
 
 Before activation or snapshot swap, route matchers, identity extractors, and algorithm configuration are compiled into immutable runtime objects. Any failure aborts the candidate snapshot.
 
-## 5. Deterministic matching
+## 6. Deterministic matching
 
 Candidate policies are filtered by enabled status and predicates. Selection order:
 
 1. descending numeric priority;
-2. descending route specificity;
-3. descending identity specificity;
-4. ascending stable policy ID.
+2. ascending stable policy ID.
 
-Specificity must be calculated by a documented deterministic function and covered by table-driven tests. Never rely on database row order, hash-map iteration order, or registration order.
+Route and identity specificity do not vary in Phase 4 because only one exact
+matcher shape is supported. Never rely on database row order, map iteration,
+or registration order.
 
 A debug-only match explanation should include:
 
@@ -110,7 +159,7 @@ A debug-only match explanation should include:
 
 It must not expose secret header values.
 
-## 6. Identity construction
+## 7. Identity construction
 
 Identity components are normalized into an unambiguous canonical representation before hashing.
 
@@ -123,7 +172,7 @@ Requirements:
 - use a keyed hash if identities have low entropy and offline guessing is a concern;
 - support key rotation without unexpectedly sharing or losing state only through an ADR.
 
-## 7. Activation and distribution
+## 8. Activation and distribution
 
 The activation transaction establishes the authoritative version. Pub/Sub is best-effort invalidation.
 
@@ -131,18 +180,24 @@ Notification payload contains only stable metadata such as:
 
 ```json
 {
+  "eventVersion": 1,
   "eventType": "POLICY_ACTIVATED",
-  "policyId": "...",
-  "version": 3,
-  "policySetGeneration": 18
+  "policyId": "catalog-client-fixed-window",
+  "version": 2,
+  "policySetRevision": 3,
+  "eventId": "11111111-1111-1111-1111-111111111111",
+  "occurredAt": "2026-08-03T12:00:00Z"
 }
 ```
 
 A gateway never trusts policy content from the event. It loads from PostgreSQL, validates, compiles, and swaps an entire snapshot.
 
-Periodic reconciliation compares generation and active version metadata. Reconciliation interval and jitter must be configurable and tested with fake time where possible.
+`POLICY_ACTIVATED` and `POLICY_DISABLED` are supported. Unknown versions/types,
+oversized/malformed payloads, duplicates, and older revisions cannot change a
+snapshot. Periodic reconciliation compares the lightweight active-set revision
+and invokes the same serialized refresh path when it differs.
 
-## 8. Runtime state across versions
+## 9. Runtime state across versions
 
 Redis keys include policy version by default. This prevents a changed policy from accidentally reusing incompatible state.
 
@@ -153,7 +208,7 @@ Consequences:
 - changing a policy can temporarily alter client allowance as expected from a fresh version;
 - any state carryover mechanism requires a dedicated ADR and migration tests.
 
-## 9. Administrative API contract
+## 10. Administrative API contract
 
 The admin API must be described by OpenAPI and tested against it.
 
@@ -161,18 +216,20 @@ Minimum operations:
 
 - create policy;
 - create draft version;
-- validate draft;
-- activate draft;
-- disable policy;
-- archive policy;
+- replace draft with `If-Match`;
+- activate/disable/archive/restore a version;
 - list policies and versions;
-- retrieve active policy set generation;
 - simulate policy matching;
-- report gateway propagation status.
+- report per-gateway loaded snapshot metadata.
 
 Optimistic concurrency control is required for draft updates to prevent silent lost updates.
 
-## 10. Auditability
+All admin/internal paths require a configured bearer token; missing and wrong
+tokens both return 401. This mechanism is development-only and supplies one
+configured audit actor, not a client-supplied identity. Match-test reads a
+candidate or active snapshot but never invokes Redis runtime state.
+
+## 11. Auditability
 
 Record at least:
 

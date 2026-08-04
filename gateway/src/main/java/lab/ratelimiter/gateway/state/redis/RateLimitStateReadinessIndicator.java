@@ -14,13 +14,21 @@ public final class RateLimitStateReadinessIndicator implements ReactiveHealthInd
 
   private final Supplier<Mono<String>> redisPing;
   private final StateBackend stateBackend;
-  private final FailureMode failureMode;
+  private final Supplier<FailureMode> failureMode;
   private final Duration timeout;
 
   public RateLimitStateReadinessIndicator(
       ReactiveStringRedisTemplate redis,
       StateBackend stateBackend,
       FailureMode failureMode,
+      Duration timeout) {
+    this(redis, stateBackend, () -> failureMode, timeout);
+  }
+
+  public RateLimitStateReadinessIndicator(
+      ReactiveStringRedisTemplate redis,
+      StateBackend stateBackend,
+      Supplier<FailureMode> failureMode,
       Duration timeout) {
     this(
         () -> redis.execute(connection -> connection.ping()).single(),
@@ -33,6 +41,14 @@ public final class RateLimitStateReadinessIndicator implements ReactiveHealthInd
       Supplier<Mono<String>> redisPing,
       StateBackend stateBackend,
       FailureMode failureMode,
+      Duration timeout) {
+    this(redisPing, stateBackend, () -> failureMode, timeout);
+  }
+
+  RateLimitStateReadinessIndicator(
+      Supplier<Mono<String>> redisPing,
+      StateBackend stateBackend,
+      Supplier<FailureMode> failureMode,
       Duration timeout) {
     this.redisPing = Objects.requireNonNull(redisPing, "redisPing");
     this.stateBackend = Objects.requireNonNull(stateBackend, "stateBackend");
@@ -55,18 +71,21 @@ public final class RateLimitStateReadinessIndicator implements ReactiveHealthInd
   }
 
   private Health available() {
+    FailureMode currentFailureMode = failureMode.get();
     return Health.up()
         .withDetail("stateBackend", stateBackend.name())
-        .withDetail("failureMode", failureMode.name())
+        .withDetail("failureMode", currentFailureMode.name())
         .withDetail("degraded", false)
         .build();
   }
 
   private Health unavailable() {
-    Health.Builder builder = failureMode == FailureMode.FAIL_OPEN ? Health.up() : Health.down();
+    FailureMode currentFailureMode = failureMode.get();
+    Health.Builder builder =
+        currentFailureMode == FailureMode.FAIL_OPEN ? Health.up() : Health.down();
     return builder
         .withDetail("stateBackend", stateBackend.name())
-        .withDetail("failureMode", failureMode.name())
+        .withDetail("failureMode", currentFailureMode.name())
         .withDetail("degraded", true)
         .withDetail("redisOutcome", "UNAVAILABLE")
         .build();

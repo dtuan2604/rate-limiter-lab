@@ -2,12 +2,358 @@ openapi: 3.1.0
 jsonSchemaDialect: https://json-schema.org/draft/2020-12/schema
 info:
   title: Rate Limiter Lab Admin API
-  version: 0.0.0
-  description: >-
-    Phase 0 contract foundation. Endpoint paths remain empty until Phase 4
-    defines approved administration behavior schema-first.
-paths: {}
+  version: 1.0.0
+  description: Development-only authenticated Phase 4 policy control plane.
+security:
+  - adminBearer: []
+paths:
+  /admin/api/v1/policies:
+    get:
+      operationId: listPolicies
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200': {$ref: '#/components/responses/PolicyPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      operationId: createPolicy
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CreatePolicyRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/PolicyVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/AdminError'}
+        '422': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/{policyId}:
+    parameters:
+      - $ref: '#/components/parameters/PolicyId'
+    get:
+      operationId: getPolicy
+      responses:
+        '200': {$ref: '#/components/responses/PolicySummary'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/{policyId}/versions:
+    parameters:
+      - $ref: '#/components/parameters/PolicyId'
+    get:
+      operationId: listPolicyVersions
+      parameters:
+        - $ref: '#/components/parameters/Page'
+        - $ref: '#/components/parameters/Size'
+      responses:
+        '200': {$ref: '#/components/responses/PolicyPage'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+    post:
+      operationId: clonePolicyVersion
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/CloneVersionRequest'}
+      responses:
+        '201': {$ref: '#/components/responses/PolicyVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/{policyId}/versions/{version}:
+    parameters:
+      - $ref: '#/components/parameters/PolicyId'
+      - $ref: '#/components/parameters/Version'
+    get:
+      operationId: getPolicyVersion
+      responses:
+        '200': {$ref: '#/components/responses/PolicyVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '404': {$ref: '#/components/responses/AdminError'}
+    put:
+      operationId: updatePolicyVersion
+      parameters:
+        - $ref: '#/components/parameters/IfMatch'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/PolicyDefinition'}
+      responses:
+        '200': {$ref: '#/components/responses/PolicyVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/AdminError'}
+        '412': {$ref: '#/components/responses/AdminError'}
+        '428': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/{policyId}/versions/{version}/activate:
+    post:
+      operationId: activatePolicyVersion
+      parameters: &versionActionParameters
+        - $ref: '#/components/parameters/PolicyId'
+        - $ref: '#/components/parameters/Version'
+      responses: &propagatingActionResponses
+        '202': {$ref: '#/components/responses/PropagationAction'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/AdminError'}
+        '422': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/{policyId}/versions/{version}/disable:
+    post:
+      operationId: disablePolicyVersion
+      parameters: *versionActionParameters
+      responses: *propagatingActionResponses
+  /admin/api/v1/policies/{policyId}/versions/{version}/archive:
+    post:
+      operationId: archivePolicyVersion
+      parameters: *versionActionParameters
+      responses:
+        '200': {$ref: '#/components/responses/PolicyVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/{policyId}/versions/{version}/restore:
+    post:
+      operationId: restorePolicyVersion
+      parameters: *versionActionParameters
+      responses:
+        '200': {$ref: '#/components/responses/PolicyVersion'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '409': {$ref: '#/components/responses/AdminError'}
+  /admin/api/v1/policies/match-test:
+    post:
+      operationId: testPolicyMatch
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/MatchTestRequest'}
+      responses:
+        '200': {$ref: '#/components/responses/MatchTest'}
+        '401': {$ref: '#/components/responses/Unauthorized'}
+        '422': {$ref: '#/components/responses/AdminError'}
+  /internal/policy-snapshot:
+    get:
+      operationId: getPolicySnapshot
+      responses:
+        '200':
+          description: Sanitized local snapshot metadata.
+          content:
+            application/json:
+              schema: {$ref: ./policy-snapshot.schema.json}
+        '401': {$ref: '#/components/responses/Unauthorized'}
 components:
+  securitySchemes:
+    adminBearer:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque-development-token
+  parameters:
+    PolicyId:
+      name: policyId
+      in: path
+      required: true
+      schema: {type: string, minLength: 1, maxLength: 128}
+    Version:
+      name: version
+      in: path
+      required: true
+      schema: {type: integer, minimum: 1}
+    Page:
+      name: page
+      in: query
+      schema: {type: integer, minimum: 0, default: 0}
+    Size:
+      name: size
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 100, default: 50}
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      schema: {type: string, pattern: '^"[0-9]+"$'}
   schemas:
-    RateLimitExceeded:
-      $ref: ./error.schema.json
+    PolicyVersion:
+      $ref: ./policy.schema.json
+    IdentityComponent:
+      oneOf:
+        - type: object
+          additionalProperties: false
+          required: [type, name]
+          properties:
+            type: {const: HEADER}
+            name: {const: X-Client-Id}
+        - type: object
+          additionalProperties: false
+          required: [type]
+          properties:
+            type: {const: ROUTE}
+    PolicyDefinition:
+      type: object
+      additionalProperties: false
+      required: [description, match, identity, algorithm, failureMode, priority]
+      properties:
+        description: {type: [string, 'null'], maxLength: 1024}
+        match:
+          type: object
+          additionalProperties: false
+          required: [routeId, path, methods]
+          properties:
+            routeId: {type: string, minLength: 1}
+            path: {type: string, minLength: 1}
+            methods:
+              type: array
+              minItems: 1
+              maxItems: 1
+              uniqueItems: true
+              items: {const: GET}
+        identity:
+          type: object
+          additionalProperties: false
+          required: [components]
+          properties:
+            components:
+              type: array
+              minItems: 2
+              maxItems: 2
+              items: {$ref: '#/components/schemas/IdentityComponent'}
+        algorithm:
+          type: object
+          additionalProperties: false
+          required: [type, configuration]
+          properties:
+            type: {const: FIXED_WINDOW}
+            configuration:
+              type: object
+              additionalProperties: false
+              required: [limit, windowMilliseconds]
+              properties:
+                limit: {type: integer, minimum: 1, maximum: 1000000}
+                windowMilliseconds: {type: integer, minimum: 1, maximum: 86400000}
+        failureMode: {enum: [FAIL_OPEN, FAIL_CLOSED]}
+        priority: {type: integer, minimum: 0, maximum: 1000}
+    CreatePolicyRequest:
+      allOf:
+        - type: object
+          additionalProperties: false
+          required: [policyId, name, version, definition]
+          properties:
+            policyId: {type: string, minLength: 1, maxLength: 128}
+            name: {type: string, minLength: 1, maxLength: 128}
+            version: {type: integer, minimum: 1}
+            definition: {$ref: '#/components/schemas/PolicyDefinition'}
+    CloneVersionRequest:
+      type: object
+      additionalProperties: false
+      required: [version, sourceVersion]
+      properties:
+        version: {type: integer, minimum: 1}
+        sourceVersion: {type: integer, minimum: 1}
+    PolicySummary:
+      type: object
+      additionalProperties: false
+      required: [policyId, name, latestVersion, activeVersion]
+      properties:
+        policyId: {type: string}
+        name: {type: string}
+        latestVersion: {type: integer, minimum: 1}
+        activeVersion: {type: [integer, 'null'], minimum: 1}
+    PolicyPage:
+      type: object
+      additionalProperties: false
+      required: [items, page, size, total]
+      properties:
+        items: {type: array, items: {type: object}}
+        page: {type: integer, minimum: 0}
+        size: {type: integer, minimum: 1, maximum: 100}
+        total: {type: integer, minimum: 0}
+    PropagationAction:
+      type: object
+      additionalProperties: false
+      required: [policyId, version, status, policySetRevision, eventId, propagationStatus, runtimeState]
+      properties:
+        policyId: {type: string}
+        version: {type: integer, minimum: 1}
+        status: {enum: [ACTIVE, DISABLED]}
+        policySetRevision: {type: integer, minimum: 1}
+        eventId: {type: string, format: uuid}
+        propagationStatus: {const: PENDING}
+        runtimeState: {const: FRESH_VERSION_STATE}
+    MatchTestRequest:
+      type: object
+      additionalProperties: false
+      required: [request]
+      properties:
+        request:
+          type: object
+          additionalProperties: false
+          required: [method, path, headers]
+          properties:
+            method: {type: string}
+            path: {type: string}
+            headers: {type: object, additionalProperties: {type: string}}
+        candidate: {$ref: '#/components/schemas/PolicyDefinition'}
+    MatchTestResponse:
+      type: object
+      additionalProperties: false
+      required: [matched, policyId, version, explanation]
+      properties:
+        matched: {type: boolean}
+        policyId: {type: [string, 'null']}
+        version: {type: [integer, 'null'], minimum: 1}
+        explanation: {type: array, items: {type: string}}
+    AdminError:
+      type: object
+      additionalProperties: false
+      required: [status, error, message, correlationId, violations]
+      properties:
+        status: {type: integer}
+        error: {type: string, minLength: 1}
+        message: {type: string, minLength: 1}
+        correlationId: {type: string, minLength: 1}
+        violations:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [field, code, message]
+            properties:
+              field: {type: string}
+              code: {type: string}
+              message: {type: string}
+  responses:
+    PolicyVersion:
+      description: Policy version.
+      headers:
+        ETag: {schema: {type: string}}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PolicyVersion'}
+    PolicySummary:
+      description: Stable policy summary.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PolicySummary'}
+    PolicyPage:
+      description: Paged policy resources.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PolicyPage'}
+    PropagationAction:
+      description: Committed change awaiting eventual propagation.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/PropagationAction'}
+    MatchTest:
+      description: Non-mutating match result.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/MatchTestResponse'}
+    AdminError:
+      description: Structured administrative error.
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AdminError'}
+    Unauthorized:
+      description: Missing or incorrect development bearer token.
+      headers:
+        WWW-Authenticate: {schema: {const: Bearer}}
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/AdminError'}

@@ -9,7 +9,22 @@ import org.springframework.test.web.reactive.server.WebTestClient;
 
 @SpringBootTest(
     webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT,
-    properties = "rate-limiter.gateway.catalog-base-url=http://127.0.0.1:1")
+    properties = {
+      "rate-limiter.gateway.catalog-base-url=http://127.0.0.1:1",
+      "rate-limiter.policy-control.enabled=false",
+      "rate-limiter.gateway.policies[0].id=catalog-client-fixed-window",
+      "rate-limiter.gateway.policies[0].version=1",
+      "rate-limiter.gateway.policies[0].route-id=catalog.items",
+      "rate-limiter.gateway.policies[0].path=/proxy/catalog/items",
+      "rate-limiter.gateway.policies[0].method=GET",
+      "rate-limiter.gateway.policies[0].algorithm=FIXED_WINDOW",
+      "rate-limiter.gateway.policies[0].limit=5",
+      "rate-limiter.gateway.policies[0].window=10s",
+      "spring.autoconfigure.exclude="
+          + "org.springframework.boot.autoconfigure.r2dbc.R2dbcAutoConfiguration,"
+          + "org.springframework.boot.autoconfigure.data.r2dbc.R2dbcDataAutoConfiguration,"
+          + "org.springframework.boot.autoconfigure.flyway.FlywayAutoConfiguration"
+    })
 class GatewayApplicationTest {
 
   @LocalServerPort private int port;

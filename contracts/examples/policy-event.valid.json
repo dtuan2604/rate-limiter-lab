@@ -1,0 +1,9 @@
+{
+  "eventVersion": 1,
+  "eventType": "POLICY_ACTIVATED",
+  "policyId": "catalog-client-fixed-window",
+  "version": 2,
+  "policySetRevision": 3,
+  "eventId": "3057fa99-0d56-4e85-b42e-5b96598b8a4e",
+  "occurredAt": "2026-08-03T12:00:00Z"
+}

@@ -1,0 +1,16 @@
+{
+  "gatewayInstanceId": "gateway-1",
+  "snapshotRevision": 3,
+  "loadedAt": "2026-08-03T12:00:01Z",
+  "activePolicies": [
+    {"policyId": "catalog-client-fixed-window", "version": 2}
+  ],
+  "lastSuccessfulReconciliation": "2026-08-03T12:00:01Z",
+  "lastEventProcessed": {
+    "eventId": "3057fa99-0d56-4e85-b42e-5b96598b8a4e",
+    "eventType": "POLICY_ACTIVATED",
+    "processedAt": "2026-08-03T12:00:01Z"
+  },
+  "degraded": false,
+  "degradationReasons": []
+}

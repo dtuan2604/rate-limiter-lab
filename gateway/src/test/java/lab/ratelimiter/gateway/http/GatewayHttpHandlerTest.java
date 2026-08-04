@@ -18,7 +18,8 @@ import lab.ratelimiter.gateway.domain.limiter.PolicyId;
 import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
 import lab.ratelimiter.gateway.identity.ClientIdentityExtractor;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
-import lab.ratelimiter.gateway.policy.StaticPolicySnapshot;
+import lab.ratelimiter.gateway.policy.PolicySnapshot;
+import lab.ratelimiter.gateway.policy.PolicySnapshotStore;
 import lab.ratelimiter.gateway.proxy.CatalogBackendClient;
 import lab.ratelimiter.gateway.proxy.CatalogBackendRequest;
 import lab.ratelimiter.gateway.proxy.CatalogBackendResponse;
@@ -55,13 +56,14 @@ class GatewayHttpHandlerTest {
                 new PolicyId("catalog-client-fixed-window"),
                 new PolicyVersion(1),
                 5,
-                Duration.ofSeconds(10)));
+                Duration.ofSeconds(10)),
+            FailureMode.FAIL_CLOSED,
+            100);
     GatewayHttpHandler handler =
         new GatewayHttpHandler(
-            new StaticPolicySnapshot(List.of(compiled)),
+            new PolicySnapshotStore(new PolicySnapshot(1, START, List.of(compiled))),
             new ClientIdentityExtractor(),
-            new RateLimitService(
-                new InMemoryFixedWindowStateAdapter(clock), FailureMode.FAIL_CLOSED),
+            new RateLimitService(new InMemoryFixedWindowStateAdapter(clock)),
             backend,
             "gateway-test",
             true);
@@ -184,6 +186,8 @@ class GatewayHttpHandlerTest {
           .expectHeader()
           .valueEquals("X-RateLimit-Policy", "catalog-client-fixed-window")
           .expectHeader()
+          .valueEquals("X-RateLimit-Policy-Version", "1")
+          .expectHeader()
           .valueMatches(CORRELATION_ID, ".+")
           .expectBody()
           .jsonPath("$.service")
@@ -209,6 +213,8 @@ class GatewayHttpHandlerTest {
         .expectHeader()
         .valueEquals("X-RateLimit-Policy", "catalog-client-fixed-window")
         .expectHeader()
+        .valueEquals("X-RateLimit-Policy-Version", "1")
+        .expectHeader()
         .valueEquals(CORRELATION_ID, "rejected-correlation")
         .expectBody()
         .json(
@@ -218,6 +224,7 @@ class GatewayHttpHandlerTest {
               "error": "RATE_LIMIT_EXCEEDED",
               "message": "Request limit exceeded",
               "policy": "catalog-client-fixed-window",
+              "policyVersion": 1,
               "retryAfterMilliseconds": 10000,
               "correlationId": "rejected-correlation"
             }
@@ -388,27 +395,32 @@ class GatewayHttpHandlerTest {
             Mono.error(new RedisStateException(outcome, "detail must not leak"));
     GatewayHttpHandler handler =
         new GatewayHttpHandler(
-            policies(),
+            policies(failureMode),
             new ClientIdentityExtractor(),
-            new RateLimitService(failing, failureMode),
+            new RateLimitService(failing),
             backend,
             "gateway-test",
             true);
     return WebTestClient.bindToRouterFunction(GatewayRoutes.routes(handler)).build();
   }
 
-  private static StaticPolicySnapshot policies() {
-    return new StaticPolicySnapshot(
-        List.of(
-            new CompiledPolicy(
-                "catalog.items",
-                "/proxy/catalog/items",
-                "GET",
-                new FixedWindowPolicy(
-                    new PolicyId("catalog-client-fixed-window"),
-                    new PolicyVersion(1),
-                    5,
-                    Duration.ofSeconds(10)))));
+  private static PolicySnapshotStore policies(FailureMode failureMode) {
+    return new PolicySnapshotStore(
+        new PolicySnapshot(
+            1,
+            START,
+            List.of(
+                new CompiledPolicy(
+                    "catalog.items",
+                    "/proxy/catalog/items",
+                    "GET",
+                    new FixedWindowPolicy(
+                        new PolicyId("catalog-client-fixed-window"),
+                        new PolicyVersion(1),
+                        5,
+                        Duration.ofSeconds(10)),
+                    failureMode,
+                    100))));
   }
 
   private static final class RecordingCatalogBackend implements CatalogBackendClient {

@@ -1,0 +1,25 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://rate-limiter-lab.local/contracts/policy-event.schema.json",
+  "title": "Policy Invalidation Event Version 1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventVersion",
+    "eventType",
+    "policyId",
+    "version",
+    "policySetRevision",
+    "eventId",
+    "occurredAt"
+  ],
+  "properties": {
+    "eventVersion": {"const": 1},
+    "eventType": {"enum": ["POLICY_ACTIVATED", "POLICY_DISABLED"]},
+    "policyId": {"type": "string", "minLength": 1, "maxLength": 128},
+    "version": {"type": "integer", "minimum": 1},
+    "policySetRevision": {"type": "integer", "minimum": 1},
+    "eventId": {"type": "string", "format": "uuid"},
+    "occurredAt": {"type": "string", "format": "date-time"}
+  }
+}

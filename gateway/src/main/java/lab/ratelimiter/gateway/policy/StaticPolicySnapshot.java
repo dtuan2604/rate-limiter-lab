@@ -9,6 +9,7 @@ import java.util.Optional;
 public final class StaticPolicySnapshot {
 
   private final Map<RouteKey, CompiledPolicy> policies;
+  private final List<CompiledPolicy> orderedPolicies;
 
   public StaticPolicySnapshot(List<CompiledPolicy> policies) {
     Objects.requireNonNull(policies, "policies");
@@ -21,10 +22,15 @@ public final class StaticPolicySnapshot {
       }
     }
     this.policies = Map.copyOf(indexed);
+    this.orderedPolicies = List.copyOf(policies);
   }
 
   public Optional<CompiledPolicy> match(String method, String path) {
     return Optional.ofNullable(policies.get(new RouteKey(method, path)));
+  }
+
+  public List<CompiledPolicy> policies() {
+    return orderedPolicies;
   }
 
   private record RouteKey(String method, String path) {

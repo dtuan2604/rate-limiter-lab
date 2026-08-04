@@ -6,7 +6,7 @@ import lab.ratelimiter.gateway.application.RateLimitService;
 import lab.ratelimiter.gateway.http.GatewayHttpHandler;
 import lab.ratelimiter.gateway.http.GatewayRoutes;
 import lab.ratelimiter.gateway.identity.ClientIdentityExtractor;
-import lab.ratelimiter.gateway.policy.StaticPolicySnapshot;
+import lab.ratelimiter.gateway.policy.PolicySnapshotStore;
 import lab.ratelimiter.gateway.proxy.CatalogBackendClient;
 import lab.ratelimiter.gateway.proxy.CatalogReadinessIndicator;
 import lab.ratelimiter.gateway.proxy.WebClientCatalogBackendClient;
@@ -35,9 +35,8 @@ public class GatewayRuntimeConfiguration {
   }
 
   @Bean
-  RateLimitService rateLimitService(
-      FixedWindowStateAdapter stateAdapter, GatewayProperties properties) {
-    return new RateLimitService(stateAdapter, properties.failureMode());
+  RateLimitService rateLimitService(FixedWindowStateAdapter stateAdapter) {
+    return new RateLimitService(stateAdapter);
   }
 
   @Bean
@@ -60,17 +59,26 @@ public class GatewayRuntimeConfiguration {
 
   @Bean(name = "rateLimitState")
   ReactiveHealthIndicator rateLimitStateHealth(
-      ReactiveStringRedisTemplate redis, GatewayProperties properties) {
+      ReactiveStringRedisTemplate redis,
+      GatewayProperties properties,
+      PolicySnapshotStore policies) {
     return new RateLimitStateReadinessIndicator(
         redis,
         properties.stateBackend(),
-        properties.failureMode(),
+        () ->
+            policies.current().policies().stream()
+                    .allMatch(
+                        policy ->
+                            policy.failureMode()
+                                == lab.ratelimiter.gateway.application.FailureMode.FAIL_OPEN)
+                ? lab.ratelimiter.gateway.application.FailureMode.FAIL_OPEN
+                : lab.ratelimiter.gateway.application.FailureMode.FAIL_CLOSED,
         properties.redisCommandTimeout());
   }
 
   @Bean
   GatewayHttpHandler gatewayHttpHandler(
-      StaticPolicySnapshot policies,
+      PolicySnapshotStore policies,
       ClientIdentityExtractor identityExtractor,
       RateLimitService rateLimitService,
       CatalogBackendClient backendClient,

@@ -1,38 +1,32 @@
 {
-  "name": "client-orders-token-bucket",
-  "description": "Per-client order creation limit",
-  "priority": 100,
+  "policyId": "catalog-client-fixed-window",
+  "name": "Catalog client fixed window",
+  "version": 1,
+  "status": "DRAFT",
+  "revision": 0,
+  "description": "Catalog requests per client and route",
   "match": {
-    "routeIds": ["orders.create"],
-    "methods": ["POST"],
-    "requiredHeaders": {
-      "X-Tenant-Id": "*"
-    }
+    "routeId": "catalog.items",
+    "path": "/proxy/catalog/items",
+    "methods": ["GET"]
   },
   "identity": {
     "components": [
-      {
-        "type": "HEADER",
-        "name": "X-Tenant-Id"
-      },
-      {
-        "type": "HEADER",
-        "name": "X-Client-Id"
-      },
-      {
-        "type": "ROUTE_ID"
-      }
+      {"type": "HEADER", "name": "X-Client-Id"},
+      {"type": "ROUTE"}
     ]
   },
   "algorithm": {
-    "type": "TOKEN_BUCKET",
-    "capacity": 20,
-    "refillTokens": 10,
-    "refillPeriodMilliseconds": 1000,
-    "requestCost": 1
+    "type": "FIXED_WINDOW",
+    "configuration": {
+      "limit": 5,
+      "windowMilliseconds": 10000
+    }
   },
   "failureMode": "FAIL_CLOSED",
-  "response": {
-    "includeRetryAfter": true
-  }
+  "priority": 100,
+  "createdAt": "2026-08-03T12:00:00Z",
+  "createdBy": "local-admin",
+  "activatedAt": null,
+  "activatedBy": null
 }
