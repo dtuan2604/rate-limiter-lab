@@ -314,7 +314,12 @@ class StaticPolicyConfigurationTest {
     assertThat(compiled.policy().policyVersion().value()).isEqualTo(1);
     assertThat(compiled.policy().algorithm()).isEqualTo(AlgorithmType.FIXED_WINDOW);
     assertThat(compiled.policy().limit()).isEqualTo(5);
-    assertThat(compiled.policy().window()).hasSeconds(10);
+    assertThat(
+            ((lab.ratelimiter.gateway.policy.CompiledFixedWindowAlgorithm)
+                    compiled.compiledAlgorithm())
+                .policy()
+                .window())
+        .hasSeconds(10);
   }
 
   private static GatewayProperties properties(URI uri, Duration timeout, PolicyProperties policy) {

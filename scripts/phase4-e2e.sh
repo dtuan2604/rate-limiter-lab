@@ -10,6 +10,7 @@ export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-phase4-$(openssl rand -hex 24)}"
 export POSTGRES_USER="${POSTGRES_USER:-rate_limiter}"
 export POLICY_ACCEPTANCE_CONTROLS_ENABLED=true
 export POLICY_RECONCILIATION_INTERVAL="${POLICY_RECONCILIATION_INTERVAL:-5s}"
+export SPRING_PROFILES_ACTIVE=acceptance
 
 authorization="Authorization: Bearer ${ADMIN_BEARER_TOKEN}"
 admin_url="http://localhost:8081/admin/api/v1/policies"

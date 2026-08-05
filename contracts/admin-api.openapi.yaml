@@ -213,21 +213,47 @@ components:
               minItems: 2
               maxItems: 2
               items: {$ref: '#/components/schemas/IdentityComponent'}
-        algorithm:
-          type: object
-          additionalProperties: false
-          required: [type, configuration]
-          properties:
-            type: {const: FIXED_WINDOW}
-            configuration:
-              type: object
-              additionalProperties: false
-              required: [limit, windowMilliseconds]
-              properties:
-                limit: {type: integer, minimum: 1, maximum: 1000000}
-                windowMilliseconds: {type: integer, minimum: 1, maximum: 86400000}
+        algorithm: {$ref: '#/components/schemas/Algorithm'}
         failureMode: {enum: [FAIL_OPEN, FAIL_CLOSED]}
         priority: {type: integer, minimum: 0, maximum: 1000}
+    Algorithm:
+      oneOf:
+        - $ref: '#/components/schemas/FixedWindowAlgorithm'
+        - $ref: '#/components/schemas/TokenBucketAlgorithm'
+      discriminator:
+        propertyName: type
+        mapping:
+          FIXED_WINDOW: '#/components/schemas/FixedWindowAlgorithm'
+          TOKEN_BUCKET: '#/components/schemas/TokenBucketAlgorithm'
+    FixedWindowAlgorithm:
+      type: object
+      additionalProperties: false
+      required: [type, configuration]
+      properties:
+        type: {const: FIXED_WINDOW}
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [limit, windowMilliseconds]
+          properties:
+            limit: {type: integer, minimum: 1, maximum: 1000000}
+            windowMilliseconds: {type: integer, minimum: 1, maximum: 86400000}
+    TokenBucketAlgorithm:
+      type: object
+      additionalProperties: false
+      required: [type, configuration]
+      properties:
+        type: {const: TOKEN_BUCKET}
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [capacity, initialTokens, refillTokens, refillPeriod, requestCost]
+          properties:
+            capacity: {type: integer, minimum: 1, maximum: 100000}
+            initialTokens: {type: integer, minimum: 0, maximum: 100000}
+            refillTokens: {type: integer, minimum: 1, maximum: 100000}
+            refillPeriod: {type: string, pattern: '^[1-9][0-9]*(?:ms|s|m|h|d)$'}
+            requestCost: {type: integer, minimum: 1, maximum: 100000}
     CreatePolicyRequest:
       allOf:
         - type: object
@@ -292,11 +318,12 @@ components:
     MatchTestResponse:
       type: object
       additionalProperties: false
-      required: [matched, policyId, version, explanation]
+      required: [matched, policyId, version, algorithm, explanation]
       properties:
         matched: {type: boolean}
         policyId: {type: [string, 'null']}
         version: {type: [integer, 'null'], minimum: 1}
+        algorithm: {type: [string, 'null'], enum: [FIXED_WINDOW, TOKEN_BUCKET, null]}
         explanation: {type: array, items: {type: string}}
     AdminError:
       type: object

@@ -46,8 +46,9 @@ repeat semantic checks.
 }
 ```
 
-Phase 4 deliberately supports only exact normalized `/proxy/**` paths, `GET`,
-identity `[HEADER:X-Client-Id, ROUTE]`, and `FIXED_WINDOW`. The persisted
+Phase 5 supports only exact normalized `/proxy/**` paths, `GET`, identity
+`[HEADER:X-Client-Id, ROUTE]`, and the typed `FIXED_WINDOW | TOKEN_BUCKET`
+algorithm union. The persisted
 `ROUTE` component compiles to the existing internal `ROUTE_ID` canonical tag
 and normalized route ID, preserving Redis identity/key compatibility.
 
@@ -60,13 +61,14 @@ and normalized route ID, preserving Redis identity/key compatibility.
 | `policy_version_methods` | Normalized method members. |
 | `policy_version_identity_components` | Ordered typed identity members. |
 | `fixed_window_configurations` | Typed limit/window subtype for a policy version. |
+| `token_bucket_configurations` | Typed capacity/initial/refill-period/cost subtype for a policy version. |
 | `policy_set_state` | Singleton authoritative active-set revision. |
 | `policy_audit` | Append-only action, actor, correlation, state change, validation outcome. |
 | `policy_event_outbox` | Durable publication intent, lease, attempt, retry, and outcome metadata. |
 
-The V1 Flyway migration is forward-only. A partial unique index enforces at
+The V1 and V2 Flyway migrations are forward-only. A partial unique index enforces at
 most one active version per policy. Check constraints bound values and supported
-enums. Triggers reject definition, method, identity, and fixed-window mutations
+enums. Triggers reject definition, method, identity, and algorithm-subtype mutations
 after first activation, including after disable/archive. Future algorithms use
 new typed subtype tables instead of nullable columns or runtime maps.
 
@@ -128,8 +130,10 @@ Phase 4 bounds and rules are:
   absolute `/proxy/**` path no longer than 512 UTF-8 bytes;
 - methods are exactly `GET` once;
 - identity is exactly `HEADER:X-Client-Id` followed by `ROUTE`;
-- algorithm is `FIXED_WINDOW`, limit is 1..1,000,000, and window is
-  1..86,400,000 whole milliseconds;
+- Fixed Window limit is 1..1,000,000 and window is 1..86,400,000 whole milliseconds;
+- Token Bucket capacity/refill/cost are 1..100,000 whole tokens, initial is
+  0..capacity, cost is at most capacity, refill period is an exact positive
+  integer plus `ms|s|m|h|d` and at most one day, and empty-to-full is at most 30 days;
 - failure mode is `FAIL_OPEN` or `FAIL_CLOSED`; priority is 0..1,000;
 - duplicate identity/method members, unsupported values, and unknown JSON
   fields are rejected.

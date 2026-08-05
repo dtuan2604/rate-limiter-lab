@@ -51,8 +51,7 @@ class PolicySnapshotEndpointTest {
     client =
         WebTestClient.bindToRouterFunction(
                 InternalPolicyRoutes.routes(
-                    new PolicySnapshotEndpointHandler(
-                        store, reconciler, consumer, "gateway-2", true)))
+                    new PolicySnapshotEndpointHandler(store, reconciler, consumer, "gateway-2")))
             .build();
   }
 
@@ -75,6 +74,8 @@ class PolicySnapshotEndpointTest {
         .isEqualTo("catalog")
         .jsonPath("$.activePolicies[0].version")
         .isEqualTo(2)
+        .jsonPath("$.activePolicies[0].algorithm")
+        .isEqualTo("FIXED_WINDOW")
         .jsonPath("$.lastSuccessfulReconciliation")
         .isEqualTo("2026-08-03T12:00:30Z")
         .jsonPath("$.lastEventProcessed")
@@ -86,11 +87,9 @@ class PolicySnapshotEndpointTest {
   }
 
   @Test
-  void acceptanceControlPausesAndResumesOnlyWhenEnabled() {
-    client.post().uri("/internal/policy-events/pause").exchange().expectStatus().isOk();
-    org.mockito.Mockito.verify(consumer).pause();
-    client.post().uri("/internal/policy-events/resume").exchange().expectStatus().isOk();
-    org.mockito.Mockito.verify(consumer).resume();
+  void snapshotRoutesDoNotRegisterAcceptanceEventControls() {
+    client.post().uri("/internal/policy-events/pause").exchange().expectStatus().isNotFound();
+    client.post().uri("/internal/policy-events/resume").exchange().expectStatus().isNotFound();
   }
 
   @Test
@@ -124,30 +123,6 @@ class PolicySnapshotEndpointTest {
   }
 
   @Test
-  void acceptanceControlIsNotAvailableWhenDisabled() {
-    var store = new PolicySnapshotStore(new PolicySnapshot(0, Instant.EPOCH, List.of()));
-    WebTestClient disabledClient =
-        WebTestClient.bindToRouterFunction(
-                InternalPolicyRoutes.routes(
-                    new PolicySnapshotEndpointHandler(
-                        store, reconciler, consumer, "gateway-1", false)))
-            .build();
-
-    disabledClient
-        .post()
-        .uri("/internal/policy-events/pause")
-        .exchange()
-        .expectStatus()
-        .isNotFound();
-    disabledClient
-        .post()
-        .uri("/internal/policy-events/resume")
-        .exchange()
-        .expectStatus()
-        .isNotFound();
-  }
-
-  @Test
   void reportsUnavailableEventSubscriptionAsDegradedWithoutExposingDetails() {
     var store = new PolicySnapshotStore(new PolicySnapshot(0, Instant.EPOCH, List.of()));
     PolicyPropagationStatus propagation = new PolicyPropagationStatus();
@@ -155,7 +130,7 @@ class PolicySnapshotEndpointTest {
         WebTestClient.bindToRouterFunction(
                 InternalPolicyRoutes.routes(
                     new PolicySnapshotEndpointHandler(
-                        store, reconciler, consumer, propagation, "gateway-1", false)))
+                        store, reconciler, consumer, propagation, "gateway-1")))
             .build();
 
     degradedClient

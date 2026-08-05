@@ -181,15 +181,9 @@ public class PolicyControlConfiguration {
       PolicyReconciler reconciler,
       PolicyEventConsumer eventConsumer,
       PolicyPropagationStatus propagationStatus,
-      GatewayProperties gateway,
-      PolicyControlProperties properties) {
+      GatewayProperties gateway) {
     return new PolicySnapshotEndpointHandler(
-        store,
-        reconciler,
-        eventConsumer,
-        propagationStatus,
-        gateway.instanceId(),
-        properties.acceptanceControlsEnabled());
+        store, reconciler, eventConsumer, propagationStatus, gateway.instanceId());
   }
 
   @Bean

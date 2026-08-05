@@ -79,11 +79,11 @@ Forbidden in distributed mode:
 
 ## 3. Request path
 
-The implemented Phase 4 catalog path is:
+The implemented Phase 5 catalog path is:
 
 ```text
 client -> HAProxy -> gateway-1|gateway-2|gateway-3
-       -> captured PostgreSQL-loaded snapshot -> fixed-window state adapter
+       -> captured PostgreSQL-loaded snapshot -> typed Fixed Window or Token Bucket adapter
        -> Redis Lua -> mock catalog service
 ```
 
@@ -137,6 +137,15 @@ The implemented fixed-window pattern is:
 ```text
 ratelimit:{p=<base64url-policy-id>:v=<version>:a=fixed-window:i=<sha256>}:w=<window-id>
 ```
+
+The Token Bucket pattern is:
+
+```text
+ratelimit:{p=<base64url-policy-id>:v=<version>:a=token-bucket:i=<sha256>}
+```
+
+Its exact arithmetic, three-field hash, reconstruction, TTL, headers, and Phase
+1 compatibility are specified in `docs/architecture/DISTRIBUTED_TOKEN_BUCKET.md`.
 
 Requirements:
 

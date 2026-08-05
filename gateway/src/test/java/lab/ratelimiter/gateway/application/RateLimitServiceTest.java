@@ -10,10 +10,13 @@ import lab.ratelimiter.gateway.domain.limiter.FixedWindowPolicy;
 import lab.ratelimiter.gateway.domain.limiter.PolicyId;
 import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
 import lab.ratelimiter.gateway.domain.limiter.RateLimitDecision;
+import lab.ratelimiter.gateway.domain.limiter.TokenBucketPolicy;
 import lab.ratelimiter.gateway.identity.ClientIdentityExtractor;
 import lab.ratelimiter.gateway.identity.LimiterIdentity;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
+import lab.ratelimiter.gateway.policy.CompiledTokenBucketAlgorithm;
 import org.junit.jupiter.api.Test;
+import reactor.core.publisher.Mono;
 
 class RateLimitServiceTest {
 
@@ -96,6 +99,71 @@ class RateLimitServiceTest {
         service.evaluate(POLICY, identity).block().rateLimitDecision().orElseThrow();
     assertThat(nextWindow.allowed()).isTrue();
     assertThat(nextWindow.remaining()).isEqualTo(4);
+  }
+
+  @Test
+  void tokenBucketDispatchesToItsTypedAdapterWithConfiguredCostAndAnchor() {
+    Instant activation = START.minusSeconds(2);
+    CompiledPolicy tokenPolicy =
+        new CompiledPolicy(
+            "catalog.items",
+            "/proxy/catalog/items",
+            "GET",
+            new CompiledTokenBucketAlgorithm(
+                new TokenBucketPolicy(
+                    new PolicyId("catalog-token"),
+                    new PolicyVersion(2),
+                    10,
+                    10,
+                    2,
+                    Duration.ofSeconds(1)),
+                3,
+                activation),
+            FailureMode.FAIL_CLOSED,
+            100);
+    LimiterIdentity identity =
+        identityExtractor.extract("client-token", tokenPolicy.routeId()).orElseThrow();
+    FixedWindowStateAdapter fixed =
+        (policy, ignoredIdentity, request) ->
+            Mono.error(new AssertionError("Fixed Window adapter must not be called"));
+    TokenBucketStateAdapter token =
+        (policy, cost, activatedAt, ignoredIdentity) -> {
+          assertThat(policy.policyId().value()).isEqualTo("catalog-token");
+          assertThat(cost).isEqualTo(3);
+          assertThat(activatedAt).isEqualTo(activation);
+          RateLimitDecision decision =
+              new RateLimitDecision(
+                  true,
+                  10,
+                  7,
+                  java.util.Optional.empty(),
+                  java.util.Optional.of(START.plusSeconds(2)),
+                  policy.policyId(),
+                  policy.policyVersion(),
+                  policy.algorithm());
+          return Mono.just(
+              new TokenBucketStateResult(
+                  decision,
+                  7_000,
+                  3_000,
+                  2_000,
+                  Duration.ofSeconds(1),
+                  Duration.ZERO,
+                  Duration.ofSeconds(2),
+                  START,
+                  Duration.ofSeconds(2),
+                  0,
+                  false,
+                  StateBackend.REDIS,
+                  RedisOutcome.ALLOWED));
+        };
+
+    RateLimitEvaluation evaluation =
+        new RateLimitService(fixed, token).evaluate(tokenPolicy, identity).block();
+
+    assertThat(evaluation.outcome()).isEqualTo(RateLimitOutcome.ALLOW);
+    assertThat(evaluation.tokenBucketResult()).isPresent();
+    assertThat(evaluation.rateLimitDecision().orElseThrow().remaining()).isEqualTo(7);
   }
 
   private static final class MutableClock extends Clock {

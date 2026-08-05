@@ -1,7 +1,7 @@
 # Verified Repository Commands
 
 All commands below run from the repository root unless a different working
-directory is stated. Phase 4 commands were executed and inspected on 2026-08-03
+directory is stated. Phase 5 commands were executed and inspected on 2026-08-04
 on macOS arm64.
 
 ## Prerequisites
@@ -37,7 +37,7 @@ scripts/check-repository-structure.sh
 ```
 
 Verifies the pinned toolchains, executable-codebase skeletons, Lua resource,
-HAProxy configuration, Compose topology, and retained/Phase 4 acceptance scripts.
+HAProxy configuration, Compose topology, migrations, and retained/Phase 5 acceptance scripts.
 
 ### Formatting
 
@@ -74,8 +74,8 @@ scripts/coverage.sh
 Runs JaCoCo plus independent pytest-cov and Vitest gates. The script exports
 raw Python coverage data and separately enforces line, statement, branch, and
 function percentages so a combined score cannot mask a deficient metric. Exit
-0 was observed. Phase 4 gateway coverage reported 2,405/2,452 lines (98.08%),
-609/660 branches (92.27%), and 502/522 methods (96.17%). Traffic simulator,
+0 was observed. Phase 5 gateway coverage reported 2,883/2,958 lines (97.46%),
+817/891 branches (91.69%), and 583/606 methods (96.20%). Traffic simulator,
 catalog, orders, payments, and portal each
 reported 100% for every supported metric.
 
@@ -97,8 +97,8 @@ JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:jacocoTestReport :g
 JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:build --no-daemon
 ```
 
-All returned exit 0. The gateway suite includes Phase 1 algorithms, atomic
-fixed-window adapters, 20 repetitions of 100 concurrent calls through three
+All returned exit 0. The 260-test gateway suite includes Phase 1 algorithms,
+atomic Fixed Window and Token Bucket adapters, repeated concurrent calls through three
 Lettuce clients, real PostgreSQL migration/constraints/transactions/concurrent
 activation, strict admin/auth contracts, outbox/Pub/Sub/reconciliation,
 immutable snapshot concurrency, structured logging, reactive forwarding, and
@@ -167,7 +167,7 @@ Equivalent focused command:
 conda run -n rate-limiter python -m pytest contracts/tests
 ```
 
-Both returned exit 0 with 13 passing tests. Strict Phase 4 fixed-window policy,
+Both returned exit 0 with 15 passing tests. Strict typed Fixed Window/Token Bucket policy,
 event, snapshot, traffic, error, and populated admin OpenAPI examples pass;
 invalid/unknown fields fail at asserted stable paths.
 
@@ -212,6 +212,8 @@ scripts/phase3-e2e.sh
 scripts/phase3-redis-failure-e2e.sh
 scripts/phase4-e2e.sh
 scripts/phase4-publication-failure-e2e.sh
+scripts/phase5-token-bucket-e2e.sh
+scripts/phase5-token-bucket-resilience-e2e.sh
 ```
 
 The first script proves one global five-request limit through three replicas,
@@ -233,7 +235,12 @@ traps.
 
 Those Phase 4 scripts passed against the completed propagation implementation
 after the final readiness/subscription-observability refinement. The complete
-`scripts/verify.sh` closeout rerun also passed and cleaned every environment.
+Phase 5 behavior script proves initial burst, continuous refill, request cost
+three, three repeated 60-request/three-replica capacity-20 trials, and dynamic
+Fixed Window/Token Bucket switching. The resilience script proves missed-event
+reconciliation, restart/removal/restoration state continuity, and Token Bucket
+FAIL_OPEN/FAIL_CLOSED behavior. Both passed standalone and in the complete
+`scripts/verify.sh` closeout rerun, which cleaned every environment.
 
 ### Destructive cleanup
 
@@ -260,5 +267,5 @@ The complete CI-equivalent entry point is:
 scripts/verify.sh
 ```
 
-The detailed Phase 4 milestone and RED-GREEN-REFACTOR evidence is recorded in
-the completed Phase 4 ExecPlan.
+The detailed Phase 5 milestone and RED-GREEN-REFACTOR evidence is recorded in
+the completed Phase 5 ExecPlan.

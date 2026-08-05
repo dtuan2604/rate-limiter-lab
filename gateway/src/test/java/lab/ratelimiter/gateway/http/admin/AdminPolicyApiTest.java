@@ -23,7 +23,9 @@ import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyEvent;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
+import lab.ratelimiter.gateway.policy.control.RefillPeriod;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
+import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.persistence.PolicySummary;
 import lab.ratelimiter.gateway.policy.persistence.PostgresPolicyRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -369,6 +371,91 @@ class AdminPolicyApiTest {
   }
 
   @Test
+  void createsAndMatchTestsStrictTypedTokenBucketPolicies() {
+    when(repository.createPolicy(
+            eq("catalog-token"), eq("Catalog token"), eq(1L), any(), eq("local-admin"), any()))
+        .thenReturn(Mono.just(tokenBucketStored()));
+
+    client
+        .post()
+        .uri("/admin/api/v1/policies")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(tokenBucketCreateJson(tokenBucketAlgorithmJson()))
+        .exchange()
+        .expectStatus()
+        .isCreated()
+        .expectBody()
+        .jsonPath("$.algorithm.type")
+        .isEqualTo("TOKEN_BUCKET")
+        .jsonPath("$.algorithm.configuration.capacity")
+        .isEqualTo(10)
+        .jsonPath("$.algorithm.configuration.initialTokens")
+        .isEqualTo(4)
+        .jsonPath("$.algorithm.configuration.refillTokens")
+        .isEqualTo(2)
+        .jsonPath("$.algorithm.configuration.refillPeriod")
+        .isEqualTo("1s")
+        .jsonPath("$.algorithm.configuration.requestCost")
+        .isEqualTo(3);
+
+    client
+        .post()
+        .uri("/admin/api/v1/policies/match-test")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(
+            """
+            {"request":{"method":"GET","path":"/proxy/catalog/items","headers":{"X-Client-Id":"client-a"}},"candidate":%s}
+            """
+                .formatted(tokenBucketDefinitionJson(tokenBucketAlgorithmJson())))
+        .exchange()
+        .expectStatus()
+        .isOk()
+        .expectBody()
+        .jsonPath("$.matched")
+        .isEqualTo(true)
+        .jsonPath("$.algorithm")
+        .isEqualTo("TOKEN_BUCKET");
+
+    verify(repository, org.mockito.Mockito.never()).loadActiveSet();
+  }
+
+  @Test
+  void rejectsUnknownMissingCrossAlgorithmDecimalAndUnknownTokenBucketFields() {
+    for (String algorithm :
+        List.of(
+            "{\"type\":\"LEAKY_BUCKET\",\"configuration\":{}}",
+            "{\"type\":\"TOKEN_BUCKET\",\"configuration\":{\"limit\":5,\"windowMilliseconds\":1000}}",
+            "{\"type\":\"TOKEN_BUCKET\",\"configuration\":{\"capacity\":10.5,\"initialTokens\":4,\"refillTokens\":2,\"refillPeriod\":\"1s\",\"requestCost\":1}}",
+            "{\"type\":\"TOKEN_BUCKET\",\"configuration\":{\"capacity\":10,\"initialTokens\":4,\"refillTokens\":2,\"refillPeriod\":\"1s\",\"requestCost\":1,\"unknown\":true}}")) {
+      client
+          .post()
+          .uri("/admin/api/v1/policies")
+          .contentType(MediaType.APPLICATION_JSON)
+          .bodyValue(tokenBucketCreateJson(algorithm))
+          .exchange()
+          .expectStatus()
+          .isBadRequest()
+          .expectBody()
+          .jsonPath("$.error")
+          .isEqualTo("INVALID_REQUEST_BODY");
+    }
+
+    client
+        .post()
+        .uri("/admin/api/v1/policies")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(
+            tokenBucketCreateJson(
+                "{\"type\":\"TOKEN_BUCKET\",\"configuration\":{\"capacity\":10,\"initialTokens\":4,\"refillTokens\":2,\"refillPeriod\":\"1s\"}}"))
+        .exchange()
+        .expectStatus()
+        .isEqualTo(422)
+        .expectBody()
+        .jsonPath("$.error")
+        .isEqualTo("POLICY_VALIDATION_FAILED");
+  }
+
+  @Test
   void activationReturnsCommittedPropagationMetadataAndFreshStateWarning() {
     UUID eventId = UUID.fromString("11111111-1111-1111-1111-111111111111");
     var active = stored(PolicyLifecycle.ACTIVE, 0, 2);
@@ -442,7 +529,7 @@ class AdminPolicyApiTest {
         .bodyValue(createJson("").replace("FIXED_WINDOW", "TOKEN_BUCKET"))
         .exchange()
         .expectStatus()
-        .isEqualTo(422);
+        .isBadRequest();
     client.get().uri("/admin/api/v1/policies?page=-1").exchange().expectStatus().isBadRequest();
     client.get().uri("/admin/api/v1/policies?size=0").exchange().expectStatus().isBadRequest();
 
@@ -578,6 +665,50 @@ class AdminPolicyApiTest {
         "local-admin",
         lifecycle == PolicyLifecycle.ACTIVE ? NOW : null,
         lifecycle == PolicyLifecycle.ACTIVE ? "local-admin" : null);
+  }
+
+  private static StoredPolicyVersion tokenBucketStored() {
+    return new StoredPolicyVersion(
+        "catalog-token",
+        "Catalog token",
+        1,
+        PolicyLifecycle.DRAFT,
+        0,
+        new PolicyDefinition(
+            "Catalog token policy",
+            "catalog.items",
+            "/proxy/catalog/items",
+            List.of("GET"),
+            List.of(
+                new PolicyIdentityComponent("HEADER", "X-Client-Id"),
+                new PolicyIdentityComponent("ROUTE", null)),
+            new TokenBucketAlgorithmDefinition(10, 4, 2, RefillPeriod.parse("1s"), 3),
+            FailureMode.FAIL_CLOSED,
+            100),
+        NOW,
+        "local-admin",
+        null,
+        null);
+  }
+
+  private static String tokenBucketCreateJson(String algorithmJson) {
+    return """
+        {"policyId":"catalog-token","name":"Catalog token","version":1,"definition":%s}
+        """
+        .formatted(tokenBucketDefinitionJson(algorithmJson));
+  }
+
+  private static String tokenBucketDefinitionJson(String algorithmJson) {
+    return """
+        {"description":"Catalog token policy","match":{"routeId":"catalog.items","path":"/proxy/catalog/items","methods":["GET"]},"identity":{"components":[{"type":"HEADER","name":"X-Client-Id"},{"type":"ROUTE"}]},"algorithm":%s,"failureMode":"FAIL_CLOSED","priority":100}
+        """
+        .formatted(algorithmJson);
+  }
+
+  private static String tokenBucketAlgorithmJson() {
+    return """
+        {"type":"TOKEN_BUCKET","configuration":{"capacity":10,"initialTokens":4,"refillTokens":2,"refillPeriod":"1s","requestCost":3}}
+        """;
   }
 
   private static String createJson(String extra) {

@@ -1,0 +1,203 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+repository_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "${repository_root}"
+
+export ADMIN_BEARER_TOKEN="${ADMIN_BEARER_TOKEN:-phase5-resilience-$(openssl rand -hex 24)}"
+export POSTGRES_PASSWORD="${POSTGRES_PASSWORD:-phase5-resilience-$(openssl rand -hex 24)}"
+export POSTGRES_USER="${POSTGRES_USER:-rate_limiter}"
+export POLICY_ACCEPTANCE_CONTROLS_ENABLED=true
+export POLICY_RECONCILIATION_INTERVAL=5s
+export SPRING_PROFILES_ACTIVE=acceptance
+
+authorization="Authorization: Bearer ${ADMIN_BEARER_TOKEN}"
+admin_url="http://localhost:8081/admin/api/v1/policies/catalog-client-fixed-window"
+evidence_directory="$(mktemp -d /tmp/rate-limiter-phase5-resilience.XXXXXX)"
+
+cleanup() {
+  docker compose unpause redis >/dev/null 2>&1 || true
+  curl --silent --request POST --header "${authorization}" \
+    http://localhost:8083/internal/policy-events/resume >/dev/null 2>&1 || true
+  docker compose down --volumes --remove-orphans
+  rm -rf "${evidence_directory}"
+}
+trap cleanup EXIT
+
+wait_for_snapshot() {
+  local port="$1"
+  local version="$2"
+  local algorithm="$3"
+  local attempts=160
+  while (( attempts > 0 )); do
+    if curl --fail --silent --header "${authorization}" \
+      "http://localhost:${port}/internal/policy-snapshot" \
+      | jq --exit-status \
+        ".activePolicies[] | select(.policyId == \"catalog-client-fixed-window\") | .version == ${version} and .algorithm == \"${algorithm}\"" \
+        >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 0.1
+    attempts=$((attempts - 1))
+  done
+  printf 'Gateway %s did not converge to %s version %s.\n' \
+    "${port}" "${algorithm}" "${version}" >&2
+  return 1
+}
+
+wait_for_all_snapshots() {
+  for port in 8081 8082 8083; do
+    wait_for_snapshot "${port}" "$1" "$2"
+  done
+}
+
+wait_for_readiness() {
+  local port="$1"
+  local expected="$2"
+  local attempts=60
+  while (( attempts > 0 )); do
+    status="$(curl --silent --output /dev/null --write-out '%{http_code}' \
+      "http://localhost:${port}/actuator/health/readiness" || true)"
+    if [[ "${status}" == "${expected}" ]]; then
+      return 0
+    fi
+    sleep 1
+    attempts=$((attempts - 1))
+  done
+  printf 'Gateway %s readiness did not become %s.\n' "${port}" "${expected}" >&2
+  return 1
+}
+
+clone_version() {
+  curl --fail --silent --show-error --request POST \
+    --header "${authorization}" --header 'Content-Type: application/json' \
+    --data "{\"version\":$2,\"sourceVersion\":$1}" \
+    "${admin_url}/versions" >/dev/null
+}
+
+update_token_bucket() {
+  local version="$1"
+  local failure_mode="$2"
+  curl --fail --silent --show-error --request PUT \
+    --header "${authorization}" --header 'Content-Type: application/json' \
+    --header 'If-Match: "0"' \
+    --data "{\"description\":\"Token Bucket resilience proof\",\"match\":{\"routeId\":\"catalog.items\",\"path\":\"/proxy/catalog/items\",\"methods\":[\"GET\"]},\"identity\":{\"components\":[{\"type\":\"HEADER\",\"name\":\"X-Client-Id\"},{\"type\":\"ROUTE\"}]},\"algorithm\":{\"type\":\"TOKEN_BUCKET\",\"configuration\":{\"capacity\":5,\"initialTokens\":5,\"refillTokens\":1,\"refillPeriod\":\"1h\",\"requestCost\":1}},\"failureMode\":\"${failure_mode}\",\"priority\":100}" \
+    "${admin_url}/versions/${version}" >/dev/null
+}
+
+activate_version() {
+  curl --fail --silent --show-error --request POST \
+    --header "${authorization}" "${admin_url}/versions/$1/activate" >/dev/null
+}
+
+reset_catalog_count() {
+  curl --fail --silent --show-error --request POST \
+    http://localhost:8101/_test/request-count/reset \
+    | jq --exit-status '.catalogRequests == 0' >/dev/null
+}
+
+catalog_count() {
+  curl --fail --silent --show-error http://localhost:8101/_test/request-count \
+    | jq --raw-output '.catalogRequests'
+}
+
+request() {
+  local port="$1"
+  local client_id="$2"
+  local evidence_name="$3"
+  curl --silent --show-error \
+    --dump-header "${evidence_directory}/${evidence_name}.headers" \
+    --output "${evidence_directory}/${evidence_name}.json" \
+    --write-out '%{http_code}' \
+    --header "X-Client-Id: ${client_id}" \
+    --header "X-Correlation-Id: ${evidence_name}" \
+    "http://localhost:${port}/proxy/catalog/items"
+}
+
+docker compose down --volumes --remove-orphans >/dev/null 2>&1 || true
+docker compose up --build --detach --wait --wait-timeout 300
+scripts/bootstrap-catalog-policy.sh
+wait_for_all_snapshots 1 FIXED_WINDOW
+
+# Scenario 6: a deliberately missed algorithm event is repaired by reconciliation.
+clone_version 1 2
+update_token_bucket 2 FAIL_CLOSED
+curl --fail --silent --show-error --request POST --header "${authorization}" \
+  http://localhost:8083/internal/policy-events/pause >/dev/null
+activate_version 2
+wait_for_snapshot 8081 2 TOKEN_BUCKET
+wait_for_snapshot 8082 2 TOKEN_BUCKET
+wait_for_snapshot 8083 1 FIXED_WINDOW
+curl --fail --silent --show-error --request POST --header "${authorization}" \
+  http://localhost:8083/internal/policy-events/resume >/dev/null
+wait_for_snapshot 8083 2 TOKEN_BUCKET
+
+# Scenario 7: partial state survives a restart and a replica removal/restoration.
+reset_catalog_count
+[[ "$(request 8080 phase5-restart-client restart-1)" == "200" ]]
+[[ "$(request 8080 phase5-restart-client restart-2)" == "200" ]]
+state_key="$(docker compose exec --no-TTY redis redis-cli --raw \
+  KEYS 'ratelimit:*:v=2:a=token-bucket:*' | tr -d '\r' | head -1)"
+balance_before="$(docker compose exec --no-TTY redis redis-cli --raw \
+  HGET "${state_key}" tokens | tr -d '\r')"
+docker compose restart gateway-1
+wait_for_snapshot 8081 2 TOKEN_BUCKET
+docker compose stop --timeout 1 gateway-3
+for number in 3 4 5; do
+  [[ "$(request 8080 phase5-restart-client "restart-${number}")" == "200" ]]
+done
+[[ "$(request 8080 phase5-restart-client restart-6)" == "429" ]]
+[[ "$(catalog_count)" == "5" ]]
+balance_after="$(docker compose exec --no-TTY redis redis-cli --raw \
+  HGET "${state_key}" tokens | tr -d '\r')"
+(( balance_after < balance_before && balance_after >= 0 ))
+docker compose start gateway-3
+wait_for_snapshot 8083 2 TOKEN_BUCKET
+[[ "$(request 8083 phase5-restart-client restart-restored)" == "429" ]]
+
+# Scenario 8a: FAIL_OPEN forwards degraded requests and does not mutate fallback state.
+clone_version 2 3
+update_token_bucket 3 FAIL_OPEN
+activate_version 3
+wait_for_all_snapshots 3 TOKEN_BUCKET
+reset_catalog_count
+[[ "$(request 8081 fail-open-token fail-open-before)" == "200" ]]
+docker compose pause redis
+wait_for_readiness 8081 200
+for number in 1 2 3; do
+  [[ "$(request 8081 fail-open-token "fail-open-outage-${number}")" == "200" ]]
+  grep -Eiq '^X-RateLimit-Degraded:[[:space:]]*true' \
+    "${evidence_directory}/fail-open-outage-${number}.headers"
+  ! grep -Eiq '^RateLimit-Remaining:' \
+    "${evidence_directory}/fail-open-outage-${number}.headers"
+done
+[[ "$(catalog_count)" == "4" ]]
+docker compose unpause redis
+wait_for_readiness 8081 200
+for number in 2 3 4 5; do
+  [[ "$(request 8081 fail-open-token "fail-open-recovery-${number}")" == "200" ]]
+done
+[[ "$(request 8081 fail-open-token fail-open-recovery-6)" == "429" ]]
+[[ "$(catalog_count)" == "8" ]]
+
+# Scenario 8b: FAIL_CLOSED returns correlated 503 and never forwards during failure.
+clone_version 3 4
+update_token_bucket 4 FAIL_CLOSED
+activate_version 4
+wait_for_all_snapshots 4 TOKEN_BUCKET
+reset_catalog_count
+[[ "$(request 8081 fail-closed-token fail-closed-before)" == "200" ]]
+docker compose pause redis
+wait_for_readiness 8081 503
+[[ "$(request 8081 fail-closed-token fail-closed-outage)" == "503" ]]
+jq --exit-status \
+  '.status == 503 and .error == "RATE_LIMIT_STATE_UNAVAILABLE" and .correlationId == "fail-closed-outage"' \
+  "${evidence_directory}/fail-closed-outage.json" >/dev/null
+[[ "$(catalog_count)" == "1" ]]
+docker compose unpause redis
+wait_for_readiness 8081 200
+[[ "$(request 8081 fail-closed-token fail-closed-recovery)" == "200" ]]
+[[ "$(catalog_count)" == "2" ]]
+
+printf 'Phase 5 missed-event, restart/scale, and Redis failure scenarios passed.\n'

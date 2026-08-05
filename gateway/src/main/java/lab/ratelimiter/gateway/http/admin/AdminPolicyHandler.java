@@ -1,5 +1,7 @@
 package lab.ratelimiter.gateway.http.admin;
 
+import com.fasterxml.jackson.annotation.JsonSubTypes;
+import com.fasterxml.jackson.annotation.JsonTypeInfo;
 import com.fasterxml.jackson.databind.DeserializationFeature;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.json.JsonMapper;
@@ -14,9 +16,13 @@ import lab.ratelimiter.gateway.application.FailureMode;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
 import lab.ratelimiter.gateway.policy.PolicySnapshotStore;
 import lab.ratelimiter.gateway.policy.control.ActivationResult;
+import lab.ratelimiter.gateway.policy.control.FixedWindowAlgorithmDefinition;
+import lab.ratelimiter.gateway.policy.control.PolicyAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
+import lab.ratelimiter.gateway.policy.control.RefillPeriod;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
+import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.persistence.PostgresPolicyRepository;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.http.HttpHeaders;
@@ -53,6 +59,7 @@ public final class AdminPolicyHandler {
         JsonMapper.builder()
             .findAndAddModules()
             .enable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES)
+            .disable(DeserializationFeature.ACCEPT_FLOAT_AS_INT)
             .build();
   }
 
@@ -380,6 +387,7 @@ public final class AdminPolicyHandler {
           method && path && identity,
           null,
           null,
+          candidate.algorithm().type().name(),
           List.of(
               method ? "method matched" : "method did not match",
               path ? "path matched" : "path did not match",
@@ -388,11 +396,12 @@ public final class AdminPolicyHandler {
     CompiledPolicy matched =
         snapshotStore.current().match(test.request().method(), test.request().path()).orElse(null);
     return matched == null
-        ? new MatchTestResponse(false, null, null, List.of("no active policy matched"))
+        ? new MatchTestResponse(false, null, null, null, List.of("no active policy matched"))
         : new MatchTestResponse(
             true,
             matched.policy().policyId().value(),
             matched.policy().policyVersion().value(),
+            matched.policy().algorithm().name(),
             List.of("active policy matched"));
   }
 
@@ -430,9 +439,6 @@ public final class AdminPolicyHandler {
       Objects.requireNonNull(match, "match");
       Objects.requireNonNull(identity, "identity");
       Objects.requireNonNull(algorithm, "algorithm");
-      if (!"FIXED_WINDOW".equals(algorithm.type())) {
-        throw new IllegalArgumentException("unsupported algorithm");
-      }
       return new PolicyDefinition(
           description,
           match.routeId(),
@@ -441,8 +447,7 @@ public final class AdminPolicyHandler {
           identity.components().stream()
               .map(component -> new PolicyIdentityComponent(component.type(), component.name()))
               .toList(),
-          algorithm.configuration().limit(),
-          Duration.ofMillis(algorithm.configuration().windowMilliseconds()),
+          algorithm.toDomain(),
           failureMode,
           priority);
     }
@@ -456,16 +461,55 @@ public final class AdminPolicyHandler {
       com.fasterxml.jackson.annotation.JsonInclude.Include.NON_NULL)
   public record IdentityComponentRequest(String type, String name) {}
 
-  public record AlgorithmRequest(String type, FixedWindowConfigurationRequest configuration) {}
+  @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
+  @JsonSubTypes({
+    @JsonSubTypes.Type(value = FixedWindowAlgorithmRequest.class, name = "FIXED_WINDOW"),
+    @JsonSubTypes.Type(value = TokenBucketAlgorithmRequest.class, name = "TOKEN_BUCKET")
+  })
+  public sealed interface AlgorithmRequest
+      permits FixedWindowAlgorithmRequest, TokenBucketAlgorithmRequest {
+    PolicyAlgorithmDefinition toDomain();
+  }
+
+  public record FixedWindowAlgorithmRequest(FixedWindowConfigurationRequest configuration)
+      implements AlgorithmRequest {
+    @Override
+    public PolicyAlgorithmDefinition toDomain() {
+      Objects.requireNonNull(configuration, "configuration");
+      return new FixedWindowAlgorithmDefinition(
+          configuration.limit(), Duration.ofMillis(configuration.windowMilliseconds()));
+    }
+  }
+
+  public record TokenBucketAlgorithmRequest(TokenBucketConfigurationRequest configuration)
+      implements AlgorithmRequest {
+    @Override
+    public PolicyAlgorithmDefinition toDomain() {
+      Objects.requireNonNull(configuration, "configuration");
+      return new TokenBucketAlgorithmDefinition(
+          configuration.capacity(),
+          configuration.initialTokens(),
+          configuration.refillTokens(),
+          RefillPeriod.parse(configuration.refillPeriod()),
+          configuration.requestCost());
+    }
+  }
 
   public record FixedWindowConfigurationRequest(long limit, long windowMilliseconds) {}
+
+  public record TokenBucketConfigurationRequest(
+      long capacity,
+      long initialTokens,
+      long refillTokens,
+      String refillPeriod,
+      long requestCost) {}
 
   public record MatchTestRequest(SampleRequest request, DefinitionRequest candidate) {}
 
   public record SampleRequest(String method, String path, Map<String, String> headers) {}
 
   public record MatchTestResponse(
-      boolean matched, String policyId, Long version, List<String> explanation) {}
+      boolean matched, String policyId, Long version, String algorithm, List<String> explanation) {}
 
   public record PolicyPage(List<?> items, int page, int size, long total) {}
 
@@ -502,16 +546,31 @@ public final class AdminPolicyHandler {
               definition.identityComponents().stream()
                   .map(value -> new IdentityComponentRequest(value.type(), value.name()))
                   .toList()),
-          new AlgorithmRequest(
-              "FIXED_WINDOW",
-              new FixedWindowConfigurationRequest(
-                  definition.limit(), definition.window().toMillis())),
+          algorithmResponse(definition.algorithm()),
           definition.failureMode(),
           definition.priority(),
           stored.createdAt(),
           stored.createdBy(),
           stored.activatedAt(),
           stored.activatedBy());
+    }
+
+    private static AlgorithmRequest algorithmResponse(PolicyAlgorithmDefinition algorithm) {
+      if (algorithm instanceof FixedWindowAlgorithmDefinition fixedWindow) {
+        return new FixedWindowAlgorithmRequest(
+            new FixedWindowConfigurationRequest(
+                fixedWindow.limit(), fixedWindow.window().toMillis()));
+      }
+      if (algorithm instanceof TokenBucketAlgorithmDefinition tokenBucket) {
+        return new TokenBucketAlgorithmRequest(
+            new TokenBucketConfigurationRequest(
+                tokenBucket.capacity(),
+                tokenBucket.initialTokens(),
+                tokenBucket.refillTokens(),
+                tokenBucket.refillPeriod().toString(),
+                tokenBucket.requestCost()));
+      }
+      throw new IllegalArgumentException("unsupported policy algorithm");
     }
   }
 

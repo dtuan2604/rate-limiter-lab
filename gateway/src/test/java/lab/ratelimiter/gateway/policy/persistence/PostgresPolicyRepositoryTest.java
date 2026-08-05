@@ -15,7 +15,9 @@ import lab.ratelimiter.gateway.policy.control.ActivationResult;
 import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
+import lab.ratelimiter.gateway.policy.control.RefillPeriod;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
+import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -102,7 +104,7 @@ class PostgresPolicyRepositoryTest {
     ActivationResult activated = repository.activate("catalog", 1, "admin", "activate").block();
 
     assertThat(activated.policy().lifecycle()).isEqualTo(PolicyLifecycle.ACTIVE);
-    assertThat(activated.policy().activatedAt()).isEqualTo(NOW);
+    assertThat(activated.policy().activatedAt()).isNotNull().isNotEqualTo(NOW);
     assertThat(activated.policy().activatedBy()).isEqualTo("admin");
     assertThat(activated.policySetRevision()).isEqualTo(1);
     assertThat(activated.event().eventType()).isEqualTo("POLICY_ACTIVATED");
@@ -112,6 +114,65 @@ class PostgresPolicyRepositoryTest {
         .isEqualTo(1L);
     assertThat(repository.pendingOutboxCount().block()).isEqualTo(1);
     assertThat(repository.auditCount("catalog").block()).isEqualTo(2);
+  }
+
+  @Test
+  void tokenBucketFieldsRoundTripExactlyAndActivationTimeComesFromPostgres() {
+    PolicyDefinition tokenBucket = tokenBucketDefinition();
+    StoredPolicyVersion created =
+        repository
+            .createPolicy("catalog-token", "Catalog token", 1, tokenBucket, "admin", "create-token")
+            .block();
+
+    assertThat(created.definition()).isEqualTo(tokenBucket);
+    assertThat(repository.findVersion("catalog-token", 1).block().definition())
+        .isEqualTo(tokenBucket);
+
+    Instant beforeActivation = Instant.now().minusSeconds(1);
+    StoredPolicyVersion activated =
+        repository.activate("catalog-token", 1, "admin", "activate-token").block().policy();
+    Instant afterActivation = Instant.now().plusSeconds(1);
+
+    assertThat(activated.lifecycle()).isEqualTo(PolicyLifecycle.ACTIVE);
+    assertThat(activated.activatedAt()).isBetween(beforeActivation, afterActivation);
+    assertThat(activated.activatedAt()).isNotEqualTo(NOW);
+    assertThat(repository.loadActiveSet().block().policies())
+        .singleElement()
+        .extracting(StoredPolicyVersion::definition)
+        .isEqualTo(tokenBucket);
+  }
+
+  @Test
+  void algorithmChangesOnlyThroughNewDraftVersionsAndActivatedDefinitionsStayImmutable() {
+    repository.createPolicy("catalog", "Catalog", 1, definition(5), "admin", "create").block();
+    repository.activate("catalog", 1, "admin", "activate-fixed").block();
+
+    StoredPolicyVersion tokenDraft =
+        repository.createVersion("catalog", 1, 2, "admin", "clone-token").block();
+    repository
+        .replaceDraft(
+            "catalog", 2, tokenDraft.revision(), tokenBucketDefinition(), "admin", "replace-token")
+        .block();
+    repository.activate("catalog", 2, "admin", "activate-token").block();
+
+    assertThat(repository.findVersion("catalog", 1).block().definition().algorithm().type().name())
+        .isEqualTo("FIXED_WINDOW");
+    assertThat(repository.findVersion("catalog", 2).block().definition())
+        .isEqualTo(tokenBucketDefinition());
+    assertThatThrownBy(
+            () ->
+                repository
+                    .replaceDraft("catalog", 2, 1, definition(7), "admin", "mutate-active-token")
+                    .block())
+        .hasMessageContaining("transition");
+
+    StoredPolicyVersion fixedDraft =
+        repository.createVersion("catalog", 2, 3, "admin", "clone-fixed").block();
+    repository
+        .replaceDraft("catalog", 3, fixedDraft.revision(), definition(7), "admin", "replace-fixed")
+        .block();
+    repository.activate("catalog", 3, "admin", "activate-fixed-again").block();
+    assertThat(repository.findVersion("catalog", 3).block().definition()).isEqualTo(definition(7));
   }
 
   @Test
@@ -262,6 +323,20 @@ class PostgresPolicyRepositoryTest {
             new PolicyIdentityComponent("ROUTE", null)),
         limit,
         Duration.ofSeconds(10),
+        FailureMode.FAIL_CLOSED,
+        100);
+  }
+
+  private static PolicyDefinition tokenBucketDefinition() {
+    return new PolicyDefinition(
+        "Catalog token requests per client and route",
+        "catalog.items",
+        "/proxy/catalog/items",
+        List.of("GET"),
+        List.of(
+            new PolicyIdentityComponent("HEADER", "X-Client-Id"),
+            new PolicyIdentityComponent("ROUTE", null)),
+        new TokenBucketAlgorithmDefinition(10, 4, 2, RefillPeriod.parse("1s"), 3),
         FailureMode.FAIL_CLOSED,
         100);
   }

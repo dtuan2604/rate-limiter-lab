@@ -9,6 +9,7 @@ public record RateLimitEvaluation(
     RateLimitOutcome outcome,
     Optional<RateLimitDecision> rateLimitDecision,
     Optional<Duration> resetAfter,
+    Optional<TokenBucketStateResult> tokenBucketResult,
     StateBackend stateBackend,
     RedisOutcome redisOutcome,
     FailureMode failureMode) {
@@ -17,9 +18,27 @@ public record RateLimitEvaluation(
     Objects.requireNonNull(outcome, "outcome");
     Objects.requireNonNull(rateLimitDecision, "rateLimitDecision");
     Objects.requireNonNull(resetAfter, "resetAfter");
+    Objects.requireNonNull(tokenBucketResult, "tokenBucketResult");
     Objects.requireNonNull(stateBackend, "stateBackend");
     Objects.requireNonNull(redisOutcome, "redisOutcome");
     Objects.requireNonNull(failureMode, "failureMode");
+  }
+
+  public RateLimitEvaluation(
+      RateLimitOutcome outcome,
+      Optional<RateLimitDecision> rateLimitDecision,
+      Optional<Duration> resetAfter,
+      StateBackend stateBackend,
+      RedisOutcome redisOutcome,
+      FailureMode failureMode) {
+    this(
+        outcome,
+        rateLimitDecision,
+        resetAfter,
+        Optional.empty(),
+        stateBackend,
+        redisOutcome,
+        failureMode);
   }
 
   public boolean degraded() {

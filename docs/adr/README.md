@@ -23,3 +23,11 @@ Initial records in this directory capture already-approved project decisions. Co
 - `0020` — Redis Pub/Sub invalidation plus PostgreSQL reconciliation.
 - `0021` — complete immutable snapshots installed by atomic reference swap.
 - `0022` — development-only bearer authentication for admin/internal routes.
+
+## Phase 5 decisions
+
+- `0023` — bounded exact millitoken arithmetic and conservative refill.
+- `0024` — missing-state reconstruction from database activation time and Redis time.
+- `0025` — semantically safe Token Bucket TTL.
+- `0026` — closed typed multi-algorithm policy representation.
+- `0027` — Token Bucket-specific response-header meanings.

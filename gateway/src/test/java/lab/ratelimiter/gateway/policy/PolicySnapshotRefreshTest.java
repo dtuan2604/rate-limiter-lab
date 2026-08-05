@@ -16,7 +16,9 @@ import lab.ratelimiter.gateway.policy.control.ActivePolicySet;
 import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
+import lab.ratelimiter.gateway.policy.control.RefillPeriod;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
+import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.persistence.PostgresPolicyRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -124,6 +126,45 @@ class PolicySnapshotRefreshTest {
     assertThat(store.current().revision()).isEqualTo(5);
   }
 
+  @Test
+  void dynamicallySwitchesFixedToTokenAndBackWhileIgnoringOlderAlgorithmEvents() {
+    when(repository.loadActiveSet())
+        .thenReturn(Mono.just(new ActivePolicySet(1, List.of(stored(1)))))
+        .thenReturn(Mono.just(new ActivePolicySet(2, List.of(tokenStored(2, NOW)))))
+        .thenReturn(Mono.just(new ActivePolicySet(1, List.of(stored(1)))))
+        .thenReturn(Mono.just(new ActivePolicySet(2, List.of(tokenStored(2, NOW)))))
+        .thenReturn(Mono.just(new ActivePolicySet(3, List.of(stored(3)))));
+
+    coordinator.refresh(1, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledFixedWindowAlgorithm.class);
+    coordinator.refresh(2, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledTokenBucketAlgorithm.class);
+    coordinator.refresh(2, ReloadTrigger.RECONCILIATION).block();
+    assertThat(store.current().revision()).isEqualTo(2);
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledTokenBucketAlgorithm.class);
+    coordinator.refresh(3, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().revision()).isEqualTo(3);
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledFixedWindowAlgorithm.class);
+  }
+
+  @Test
+  void failedTokenBucketCandidateCompilationPreservesPriorCompleteSnapshot() {
+    store.install(new PolicySnapshot(1, NOW, List.of()));
+    PolicySnapshot prior = store.current();
+    when(repository.loadActiveSet())
+        .thenReturn(Mono.just(new ActivePolicySet(2, List.of(tokenStored(2, null)))));
+
+    assertThat(coordinator.refresh(2, ReloadTrigger.RECONCILIATION).onErrorComplete().block())
+        .isNull();
+
+    assertThat(store.current()).isSameAs(prior);
+    assertThat(store.current().revision()).isEqualTo(1);
+  }
+
   private static StoredPolicyVersion stored(long version) {
     return new StoredPolicyVersion(
         "catalog",
@@ -147,5 +188,29 @@ class PolicySnapshotRefreshTest {
         "admin",
         NOW,
         "admin");
+  }
+
+  private static StoredPolicyVersion tokenStored(long version, Instant activatedAt) {
+    return new StoredPolicyVersion(
+        "catalog",
+        "Catalog",
+        version,
+        PolicyLifecycle.ACTIVE,
+        0,
+        new PolicyDefinition(
+            null,
+            "catalog.items",
+            "/proxy/catalog/items",
+            List.of("GET"),
+            List.of(
+                new PolicyIdentityComponent("HEADER", "X-Client-Id"),
+                new PolicyIdentityComponent("ROUTE", null)),
+            new TokenBucketAlgorithmDefinition(10, 10, 2, RefillPeriod.parse("1s"), 1),
+            FailureMode.FAIL_OPEN,
+            200),
+        NOW.minusSeconds(30),
+        "admin",
+        activatedAt,
+        activatedAt == null ? null : "admin");
   }
 }

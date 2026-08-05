@@ -1,0 +1,35 @@
+{
+  "policyId": "catalog-client-token-bucket",
+  "name": "Catalog client token bucket",
+  "version": 2,
+  "status": "DRAFT",
+  "revision": 0,
+  "description": "Catalog burst and sustained throughput per client and route",
+  "match": {
+    "routeId": "catalog.items",
+    "path": "/proxy/catalog/items",
+    "methods": ["GET"]
+  },
+  "identity": {
+    "components": [
+      {"type": "HEADER", "name": "X-Client-Id"},
+      {"type": "ROUTE"}
+    ]
+  },
+  "algorithm": {
+    "type": "TOKEN_BUCKET",
+    "configuration": {
+      "capacity": 10,
+      "initialTokens": 10,
+      "refillTokens": 2,
+      "refillPeriod": "1s",
+      "requestCost": 1
+    }
+  },
+  "failureMode": "FAIL_CLOSED",
+  "priority": 100,
+  "createdAt": "2026-08-04T12:00:00Z",
+  "createdBy": "local-admin",
+  "activatedAt": null,
+  "activatedBy": null
+}

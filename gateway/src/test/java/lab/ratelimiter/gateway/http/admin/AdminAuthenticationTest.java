@@ -35,6 +35,18 @@ class AdminAuthenticationTest {
                   invocations.incrementAndGet();
                   return ServerResponse.ok().build();
                 })
+            .POST(
+                "/internal/policy-events/pause",
+                ignored -> {
+                  invocations.incrementAndGet();
+                  return ServerResponse.ok().build();
+                })
+            .POST(
+                "/internal/policy-events/resume",
+                ignored -> {
+                  invocations.incrementAndGet();
+                  return ServerResponse.ok().build();
+                })
             .GET(
                 "/proxy/catalog/items",
                 ignored -> {
@@ -72,6 +84,15 @@ class AdminAuthenticationTest {
         .isUnauthorized()
         .expectHeader()
         .valueEquals(HttpHeaders.WWW_AUTHENTICATE, "Bearer");
+
+    client.post().uri("/internal/policy-events/pause").exchange().expectStatus().isUnauthorized();
+    client
+        .post()
+        .uri("/internal/policy-events/resume")
+        .header(HttpHeaders.AUTHORIZATION, "Bearer wrong-secret-token")
+        .exchange()
+        .expectStatus()
+        .isUnauthorized();
 
     assertThat(invocations).hasValue(0);
   }

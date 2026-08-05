@@ -66,6 +66,27 @@ await_fresh_redis_window() {
   fi
 }
 
+redis_window_id() {
+  local redis_seconds
+  redis_seconds="$(
+    docker compose exec --no-TTY redis redis-cli --raw TIME \
+      | tr -d '\r' \
+      | sed -n '1p'
+  )"
+  printf '%s\n' "$((redis_seconds / 10))"
+}
+
+assert_redis_window() {
+  local expected="$1"
+  local observed
+  observed="$(redis_window_id)"
+  if [[ "${observed}" != "${expected}" ]]; then
+    printf 'Fixed Window boundary crossed during unhealthy-removal proof: expected %s, observed %s.\n' \
+      "${expected}" "${observed}" >&2
+    return 1
+  fi
+}
+
 request() {
   local client_id="$1"
   local evidence_name="$2"
@@ -185,16 +206,28 @@ done
 assert_catalog_count "$((5 + $(find "${evidence_directory}" -name 'scale-probe-*.headers' | wc -l | tr -d ' ')))"
 
 # Unhealthy removal: stopped replicas leave rotation and state remains valid.
+docker compose stop --timeout 1 gateway-2
+removal_probe_count=0
+for attempt in $(seq 1 20); do
+  removal_probe_count="${attempt}"
+  [[ "$(request "phase3-removal-probe-${attempt}" "removal-probe-${attempt}")" == "200" ]]
+  if [[ "$(instance_for "removal-probe-${attempt}")" != "gateway-2" ]]; then
+    break
+  fi
+  sleep 0.1
+done
+[[ "$(instance_for "removal-probe-${removal_probe_count}")" != "gateway-2" ]]
 await_fresh_redis_window
 reset_state
+removal_window="$(redis_window_id)"
 [[ "$(request phase3-removal-client removal-1)" == "200" ]]
 [[ "$(request phase3-removal-client removal-2)" == "200" ]]
-docker compose stop gateway-2
-sleep 3
+assert_redis_window "${removal_window}"
 for number in 3 4 5; do
   [[ "$(request phase3-removal-client "removal-${number}")" == "200" ]]
   [[ "$(instance_for "removal-${number}")" != "gateway-2" ]]
 done
+assert_redis_window "${removal_window}"
 [[ "$(request phase3-removal-client removal-6)" == "429" ]]
 [[ "$(instance_for removal-6)" != "gateway-2" ]]
 assert_catalog_count 5

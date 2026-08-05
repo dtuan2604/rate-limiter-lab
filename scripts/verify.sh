@@ -24,5 +24,7 @@ scripts/phase3-e2e.sh
 scripts/phase3-redis-failure-e2e.sh
 scripts/phase4-e2e.sh
 scripts/phase4-publication-failure-e2e.sh
+scripts/phase5-token-bucket-e2e.sh
+scripts/phase5-token-bucket-resilience-e2e.sh
 
-printf 'Phase 4 CI-equivalent verification passed.\n'
+printf 'Phase 5 CI-equivalent verification passed.\n'

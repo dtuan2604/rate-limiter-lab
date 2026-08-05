@@ -86,16 +86,23 @@ Stop and remove the local environment:
 docker compose down --volumes --remove-orphans
 ```
 
-Run the retained and Phase 4 acceptance proofs:
+Run the retained and Phase 5 acceptance proofs:
 
 ```bash
 scripts/phase3-e2e.sh
 scripts/phase3-redis-failure-e2e.sh
 scripts/phase4-e2e.sh
 scripts/phase4-publication-failure-e2e.sh
+scripts/phase5-token-bucket-e2e.sh
+scripts/phase5-token-bucket-resilience-e2e.sh
 ```
 
 The Phase 4 suites prove dynamic activation without gateway restart, convergence
 across three replicas, version-isolated Redis keys, missed-Pub/Sub recovery,
 startup reload, invalid-activation safety, and publication-failure recovery.
 See `docs/COMMANDS.md` and the completed Phase 4 ExecPlan for exact evidence.
+The Phase 5 suites additionally prove Token Bucket burst/refill/cost semantics,
+algorithm switching, repeated multi-replica atomicity, missed-event recovery,
+restart/scale persistence, and both Redis failure modes. See
+`docs/architecture/DISTRIBUTED_TOKEN_BUCKET.md` for the exact compatibility and
+operational contract.

@@ -33,6 +33,42 @@ def test_phase_four_fixed_window_policy_is_valid() -> None:
     assert validation_paths("policy.schema.json", "policy.valid.json") == []
 
 
+def test_phase_five_token_bucket_policy_is_valid() -> None:
+    """The strict Token Bucket discriminator branch accepts every required field."""
+    assert validation_paths("policy.schema.json", "policy.token-bucket.valid.json") == []
+
+
+def test_algorithm_union_rejects_unknown_missing_cross_algorithm_and_decimal_values() -> None:
+    """Algorithm branches are closed and contain only their typed integer configuration."""
+    schema = load_json(CONTRACTS_ROOT / "policy.schema.json")
+    validator = Draft202012Validator(schema)
+    valid = load_json(EXAMPLES_ROOT / "policy.token-bucket.valid.json")
+
+    invalid_documents: list[dict[str, Any]] = []
+    for mutation in (
+        {"type": "LEAKY_BUCKET"},
+        {"configuration": {"capacity": 10}},
+        {"configuration": {"limit": 10, "windowMilliseconds": 1000}},
+        {"configuration": {"capacity": 10.5}},
+        {"configuration": {"unexpected": True}},
+    ):
+        document = json.loads(json.dumps(valid))
+        if "type" in mutation:
+            document["algorithm"]["type"] = mutation["type"]
+        configuration = mutation.get("configuration")
+        if configuration == {"capacity": 10}:
+            document["algorithm"]["configuration"].pop("requestCost")
+        elif configuration == {"limit": 10, "windowMilliseconds": 1000}:
+            document["algorithm"]["configuration"] = configuration
+        elif configuration == {"capacity": 10.5}:
+            document["algorithm"]["configuration"]["capacity"] = 10.5
+        elif configuration == {"unexpected": True}:
+            document["algorithm"]["configuration"]["unexpected"] = True
+        invalid_documents.append(document)
+
+    assert all(list(validator.iter_errors(document)) for document in invalid_documents)
+
+
 def test_non_positive_policy_limit_fails_at_stable_path() -> None:
     """An invalid fixed-window limit is reported at the configuration field."""
     assert validation_paths("policy.schema.json", "policy.invalid.json") == [

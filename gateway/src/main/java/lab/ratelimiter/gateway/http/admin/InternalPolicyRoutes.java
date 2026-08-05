@@ -9,10 +9,6 @@ public final class InternalPolicyRoutes {
   private InternalPolicyRoutes() {}
 
   public static RouterFunction<ServerResponse> routes(PolicySnapshotEndpointHandler handler) {
-    return RouterFunctions.route()
-        .GET("/internal/policy-snapshot", handler::snapshot)
-        .POST("/internal/policy-events/pause", handler::pauseEvents)
-        .POST("/internal/policy-events/resume", handler::resumeEvents)
-        .build();
+    return RouterFunctions.route().GET("/internal/policy-snapshot", handler::snapshot).build();
   }
 }

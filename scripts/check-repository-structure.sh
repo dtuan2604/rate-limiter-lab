@@ -14,7 +14,9 @@ required_files=(
   "gateway/build.gradle.kts"
   "gateway/src/main/java/lab/ratelimiter/gateway/GatewayApplication.java"
   "gateway/src/main/resources/redis/fixed-window-v1.lua"
+  "gateway/src/main/resources/redis/token-bucket-v1.lua"
   "gateway/src/main/resources/db/migration/V1__policy_control_plane.sql"
+  "gateway/src/main/resources/db/migration/V2__distributed_token_bucket.sql"
   "contracts/policy-event.schema.json"
   "contracts/policy-snapshot.schema.json"
   "deploy/haproxy/haproxy.cfg"
@@ -24,6 +26,8 @@ required_files=(
   "scripts/bootstrap-catalog-policy.sh"
   "scripts/phase4-e2e.sh"
   "scripts/phase4-publication-failure-e2e.sh"
+  "scripts/phase5-token-bucket-e2e.sh"
+  "scripts/phase5-token-bucket-resilience-e2e.sh"
   "traffic-simulator/pyproject.toml"
   "traffic-simulator/src/rate_limiter_traffic_simulator/__init__.py"
   "mock-services/pyproject.toml"
@@ -47,4 +51,4 @@ if (( ${#missing[@]} > 0 )); then
   exit 1
 fi
 
-printf 'Phase 4 repository structure is discoverable.\n'
+printf 'Phase 5 repository structure is discoverable.\n'

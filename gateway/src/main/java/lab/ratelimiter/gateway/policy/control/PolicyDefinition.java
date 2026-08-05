@@ -14,8 +14,7 @@ public record PolicyDefinition(
     String path,
     List<String> methods,
     List<PolicyIdentityComponent> identityComponents,
-    long limit,
-    Duration window,
+    PolicyAlgorithmDefinition algorithm,
     FailureMode failureMode,
     int priority) {
 
@@ -42,20 +41,47 @@ public record PolicyDefinition(
             new PolicyIdentityComponent("ROUTE", null)))) {
       throw new IllegalArgumentException("identity must be HEADER:X-Client-Id followed by ROUTE");
     }
-    if (limit < 1 || limit > 1_000_000) {
-      throw new IllegalArgumentException("limit must be between 1 and 1000000");
-    }
-    Objects.requireNonNull(window, "window");
-    long milliseconds = window.toMillis();
-    if (milliseconds < 1
-        || milliseconds > Duration.ofDays(1).toMillis()
-        || !window.equals(Duration.ofMillis(milliseconds))) {
-      throw new IllegalArgumentException("window must be 1..86400000 whole milliseconds");
-    }
+    Objects.requireNonNull(algorithm, "algorithm");
     Objects.requireNonNull(failureMode, "failureMode");
     if (priority < 0 || priority > 1000) {
       throw new IllegalArgumentException("priority must be between 0 and 1000");
     }
+  }
+
+  public PolicyDefinition(
+      String description,
+      String routeId,
+      String path,
+      List<String> methods,
+      List<PolicyIdentityComponent> identityComponents,
+      long limit,
+      Duration window,
+      FailureMode failureMode,
+      int priority) {
+    this(
+        description,
+        routeId,
+        path,
+        methods,
+        identityComponents,
+        new FixedWindowAlgorithmDefinition(limit, window),
+        failureMode,
+        priority);
+  }
+
+  public long limit() {
+    return fixedWindow().limit();
+  }
+
+  public Duration window() {
+    return fixedWindow().window();
+  }
+
+  private FixedWindowAlgorithmDefinition fixedWindow() {
+    if (algorithm instanceof FixedWindowAlgorithmDefinition fixedWindow) {
+      return fixedWindow;
+    }
+    throw new IllegalStateException("policy is not Fixed Window");
   }
 
   private static void requireText(String value, String name) {

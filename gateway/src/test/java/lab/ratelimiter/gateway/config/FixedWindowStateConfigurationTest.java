@@ -6,7 +6,10 @@ import static org.mockito.Mockito.mock;
 import java.time.Clock;
 import lab.ratelimiter.gateway.application.FixedWindowStateAdapter;
 import lab.ratelimiter.gateway.application.InMemoryFixedWindowStateAdapter;
+import lab.ratelimiter.gateway.application.InMemoryTokenBucketStateAdapter;
+import lab.ratelimiter.gateway.application.TokenBucketStateAdapter;
 import lab.ratelimiter.gateway.state.redis.RedisFixedWindowStateAdapter;
+import lab.ratelimiter.gateway.state.redis.RedisTokenBucketStateAdapter;
 import org.junit.jupiter.api.Test;
 import org.springframework.boot.test.context.runner.ApplicationContextRunner;
 import org.springframework.context.annotation.Bean;
@@ -29,6 +32,9 @@ class FixedWindowStateConfigurationTest {
               assertThat(context).hasSingleBean(FixedWindowStateAdapter.class);
               assertThat(context.getBean(FixedWindowStateAdapter.class))
                   .isInstanceOf(RedisFixedWindowStateAdapter.class);
+              assertThat(context).hasSingleBean(TokenBucketStateAdapter.class);
+              assertThat(context.getBean(TokenBucketStateAdapter.class))
+                  .isInstanceOf(RedisTokenBucketStateAdapter.class);
             });
   }
 
@@ -41,6 +47,9 @@ class FixedWindowStateConfigurationTest {
               assertThat(context).hasSingleBean(FixedWindowStateAdapter.class);
               assertThat(context.getBean(FixedWindowStateAdapter.class))
                   .isInstanceOf(InMemoryFixedWindowStateAdapter.class);
+              assertThat(context).hasSingleBean(TokenBucketStateAdapter.class);
+              assertThat(context.getBean(TokenBucketStateAdapter.class))
+                  .isInstanceOf(InMemoryTokenBucketStateAdapter.class);
             });
   }
 

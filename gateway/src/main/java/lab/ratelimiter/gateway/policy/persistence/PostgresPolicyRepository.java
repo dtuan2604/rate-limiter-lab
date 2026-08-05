@@ -13,11 +13,14 @@ import java.util.UUID;
 import lab.ratelimiter.gateway.application.FailureMode;
 import lab.ratelimiter.gateway.policy.control.ActivationResult;
 import lab.ratelimiter.gateway.policy.control.ActivePolicySet;
+import lab.ratelimiter.gateway.policy.control.FixedWindowAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyEvent;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
+import lab.ratelimiter.gateway.policy.control.RefillPeriod;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
+import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
@@ -69,14 +72,20 @@ public final class PostgresPolicyRepository {
         .sql(
             """
             SELECT p.name, pv.*, fw.request_limit, fw.window_milliseconds,
+              fw.algorithm_type AS fixed_algorithm_type,
+              tb.capacity, tb.initial_tokens, tb.refill_tokens,
+              tb.refill_period_amount, tb.refill_period_unit, tb.request_cost,
+              tb.algorithm_type AS token_algorithm_type,
               (SELECT count(*) FROM policy_version_methods m
                  WHERE m.policy_id = pv.policy_id AND m.version = pv.version) AS method_count,
               (SELECT count(*) FROM policy_version_identity_components i
                  WHERE i.policy_id = pv.policy_id AND i.version = pv.version) AS identity_count
             FROM policy_versions pv
             JOIN policies p ON p.policy_id = pv.policy_id
-            JOIN fixed_window_configurations fw
+            LEFT JOIN fixed_window_configurations fw
               ON fw.policy_id = pv.policy_id AND fw.version = pv.version
+            LEFT JOIN token_bucket_configurations tb
+              ON tb.policy_id = pv.policy_id AND tb.version = pv.version
             WHERE pv.policy_id = :policyId AND pv.version = :version
             """)
         .bind("policyId", policyId)
@@ -390,6 +399,10 @@ public final class PostgresPolicyRepository {
             """
             SELECT state.revision AS policy_set_revision, p.name, pv.*,
               fw.request_limit, fw.window_milliseconds,
+              fw.algorithm_type AS fixed_algorithm_type,
+              tb.capacity, tb.initial_tokens, tb.refill_tokens,
+              tb.refill_period_amount, tb.refill_period_unit, tb.request_cost,
+              tb.algorithm_type AS token_algorithm_type,
               (SELECT count(*) FROM policy_version_methods m
                 WHERE m.policy_id = pv.policy_id AND m.version = pv.version) AS method_count,
               (SELECT count(*) FROM policy_version_identity_components i
@@ -399,6 +412,8 @@ public final class PostgresPolicyRepository {
             LEFT JOIN policies p ON p.policy_id = pv.policy_id
             LEFT JOIN fixed_window_configurations fw
               ON fw.policy_id = pv.policy_id AND fw.version = pv.version
+            LEFT JOIN token_bucket_configurations tb
+              ON tb.policy_id = pv.policy_id AND tb.version = pv.version
             WHERE state.singleton_id = 1
             ORDER BY pv.priority DESC, pv.policy_id ASC
             """)
@@ -524,7 +539,8 @@ public final class PostgresPolicyRepository {
   public Mono<Void> deleteAllForTests() {
     return database
         .sql(
-            "TRUNCATE policy_event_outbox, policy_audit, fixed_window_configurations, "
+            "TRUNCATE policy_event_outbox, policy_audit, token_bucket_configurations, "
+                + "fixed_window_configurations, "
                 + "policy_version_identity_components, policy_version_methods, "
                 + "policy_versions, policies RESTART IDENTITY CASCADE")
         .fetch()
@@ -564,12 +580,13 @@ public final class PostgresPolicyRepository {
                   route_id, route_path, algorithm_type, failure_mode, priority,
                   created_at, created_by, updated_at, updated_by)
                 VALUES (:id, :version, 'DRAFT', 0, :description, :routeId, :path,
-                  'FIXED_WINDOW', :failureMode, :priority, :now, :actor, :now, :actor)
+                  :algorithmType, :failureMode, :priority, :now, :actor, :now, :actor)
                 """)
             .bind("id", id)
             .bind("version", version)
             .bind("routeId", definition.routeId())
             .bind("path", definition.path())
+            .bind("algorithmType", definition.algorithm().type().name())
             .bind("failureMode", definition.failureMode().name())
             .bind("priority", definition.priority())
             .bind("now", offset(now))
@@ -614,20 +631,46 @@ public final class PostgresPolicyRepository {
                           : statement.bind("name", component.name());
                   return statement.fetch().rowsUpdated().then();
                 });
-    Mono<Void> configuration =
-        database
-            .sql(
-                "INSERT INTO fixed_window_configurations("
-                    + "policy_id, version, request_limit, window_milliseconds) "
-                    + "VALUES (:id, :version, :limit, :window)")
-            .bind("id", id)
-            .bind("version", version)
-            .bind("limit", definition.limit())
-            .bind("window", definition.window().toMillis())
-            .fetch()
-            .rowsUpdated()
-            .then();
+    Mono<Void> configuration = insertConfiguration(id, version, definition);
     return method.thenMany(identities).then().then(configuration);
+  }
+
+  private Mono<Void> insertConfiguration(String id, long version, PolicyDefinition definition) {
+    if (definition.algorithm() instanceof FixedWindowAlgorithmDefinition fixedWindow) {
+      return database
+          .sql(
+              "INSERT INTO fixed_window_configurations("
+                  + "policy_id, version, algorithm_type, request_limit, window_milliseconds) "
+                  + "VALUES (:id, :version, 'FIXED_WINDOW', :limit, :window)")
+          .bind("id", id)
+          .bind("version", version)
+          .bind("limit", fixedWindow.limit())
+          .bind("window", fixedWindow.window().toMillis())
+          .fetch()
+          .rowsUpdated()
+          .then();
+    }
+    if (definition.algorithm() instanceof TokenBucketAlgorithmDefinition tokenBucket) {
+      return database
+          .sql(
+              "INSERT INTO token_bucket_configurations("
+                  + "policy_id, version, algorithm_type, capacity, initial_tokens, refill_tokens, "
+                  + "refill_period_amount, refill_period_unit, request_cost) "
+                  + "VALUES (:id, :version, 'TOKEN_BUCKET', :capacity, :initialTokens, "
+                  + ":refillTokens, :refillPeriodAmount, :refillPeriodUnit, :requestCost)")
+          .bind("id", id)
+          .bind("version", version)
+          .bind("capacity", tokenBucket.capacity())
+          .bind("initialTokens", tokenBucket.initialTokens())
+          .bind("refillTokens", tokenBucket.refillTokens())
+          .bind("refillPeriodAmount", tokenBucket.refillPeriod().amount())
+          .bind("refillPeriodUnit", tokenBucket.refillPeriod().unit().symbol())
+          .bind("requestCost", tokenBucket.requestCost())
+          .fetch()
+          .rowsUpdated()
+          .then();
+    }
+    return Mono.error(new IllegalArgumentException("unsupported policy algorithm"));
   }
 
   private Mono<Void> replaceChildren(String id, long version, PolicyDefinition definition) {
@@ -640,7 +683,16 @@ public final class PostgresPolicyRepository {
             .bind("version", version)
             .fetch()
             .rowsUpdated()
-            .then();
+            .then(
+                database
+                    .sql(
+                        "DELETE FROM token_bucket_configurations "
+                            + "WHERE policy_id = :id AND version = :version")
+                    .bind("id", id)
+                    .bind("version", version)
+                    .fetch()
+                    .rowsUpdated()
+                    .then());
     Mono<Void> deleteIdentity =
         database
             .sql(
@@ -677,13 +729,15 @@ public final class PostgresPolicyRepository {
             .sql(
                 """
                 UPDATE policy_versions SET description = :description, route_id = :routeId,
-                  route_path = :path, failure_mode = :failureMode, priority = :priority,
+                  route_path = :path, algorithm_type = :algorithmType,
+                  failure_mode = :failureMode, priority = :priority,
                   revision = revision + 1, updated_at = :now, updated_by = :actor
                 WHERE policy_id = :id AND version = :version AND lifecycle_status = 'DRAFT'
                   AND revision = :expectedRevision
                 """)
             .bind("routeId", definition.routeId())
             .bind("path", definition.path())
+            .bind("algorithmType", definition.algorithm().type().name())
             .bind("failureMode", definition.failureMode().name())
             .bind("priority", definition.priority())
             .bind("now", offset(now))
@@ -808,7 +862,7 @@ public final class PostgresPolicyRepository {
     return database
         .sql(
             "UPDATE policy_versions SET lifecycle_status = 'ACTIVE', "
-                + "activated_at = COALESCE(activated_at, :now), "
+                + "activated_at = COALESCE(activated_at, CURRENT_TIMESTAMP), "
                 + "activated_by = COALESCE(activated_by, :actor), "
                 + "disabled_at = NULL, disabled_by = NULL, updated_at = :now, updated_by = :actor "
                 + "WHERE policy_id = :id AND version = :version")
@@ -901,6 +955,32 @@ public final class PostgresPolicyRepository {
     if (methodCount != 1 || identityCount != 2) {
       throw new IllegalStateException("stored policy components are incomplete");
     }
+    String algorithmType = required(row, "algorithm_type", String.class);
+    boolean fixedPresent = row.get("fixed_algorithm_type", String.class) != null;
+    boolean tokenPresent = row.get("token_algorithm_type", String.class) != null;
+    if (fixedPresent == tokenPresent) {
+      throw new IllegalStateException("stored policy must contain exactly one algorithm subtype");
+    }
+    lab.ratelimiter.gateway.policy.control.PolicyAlgorithmDefinition algorithm;
+    if ("FIXED_WINDOW".equals(algorithmType) && fixedPresent) {
+      algorithm =
+          new FixedWindowAlgorithmDefinition(
+              required(row, "request_limit", Long.class),
+              Duration.ofMillis(required(row, "window_milliseconds", Long.class)));
+    } else if ("TOKEN_BUCKET".equals(algorithmType) && tokenPresent) {
+      algorithm =
+          new TokenBucketAlgorithmDefinition(
+              required(row, "capacity", Long.class),
+              required(row, "initial_tokens", Long.class),
+              required(row, "refill_tokens", Long.class),
+              new RefillPeriod(
+                  required(row, "refill_period_amount", Long.class),
+                  refillUnit(required(row, "refill_period_unit", String.class))),
+              required(row, "request_cost", Long.class));
+    } else {
+      throw new IllegalStateException(
+          "stored policy algorithm discriminator conflicts with subtype");
+    }
     PolicyDefinition definition =
         new PolicyDefinition(
             row.get("description", String.class),
@@ -910,8 +990,7 @@ public final class PostgresPolicyRepository {
             List.of(
                 new PolicyIdentityComponent("HEADER", "X-Client-Id"),
                 new PolicyIdentityComponent("ROUTE", null)),
-            required(row, "request_limit", Long.class),
-            Duration.ofMillis(required(row, "window_milliseconds", Long.class)),
+            algorithm,
             FailureMode.valueOf(required(row, "failure_mode", String.class)),
             required(row, "priority", Integer.class));
     OffsetDateTime activated = row.get("activated_at", OffsetDateTime.class);
@@ -926,6 +1005,15 @@ public final class PostgresPolicyRepository {
         required(row, "created_by", String.class),
         activated == null ? null : activated.toInstant(),
         row.get("activated_by", String.class));
+  }
+
+  private static RefillPeriod.Unit refillUnit(String symbol) {
+    for (RefillPeriod.Unit unit : RefillPeriod.Unit.values()) {
+      if (unit.symbol().equals(symbol)) {
+        return unit;
+      }
+    }
+    throw new IllegalStateException("stored refill period unit is unsupported");
   }
 
   private static OutboxEvent mapOutbox(Row row) {
