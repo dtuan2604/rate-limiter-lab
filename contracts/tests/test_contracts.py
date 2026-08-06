@@ -38,6 +38,39 @@ def test_phase_five_token_bucket_policy_is_valid() -> None:
     assert validation_paths("policy.schema.json", "policy.token-bucket.valid.json") == []
 
 
+def test_phase_six_sliding_window_counter_policy_is_valid() -> None:
+    """The strict Sliding Window Counter branch accepts its typed configuration."""
+    assert validation_paths("policy.schema.json", "policy.sliding-window-counter.valid.json") == []
+
+
+def test_sliding_window_counter_rejects_missing_cross_decimal_unknown_and_unsafe_fields() -> None:
+    """Sliding Counter policies are integral, bounded, and closed to foreign fields."""
+    schema = load_json(CONTRACTS_ROOT / "policy.schema.json")
+    validator = Draft202012Validator(schema)
+    valid = load_json(EXAMPLES_ROOT / "policy.sliding-window-counter.valid.json")
+
+    configurations: list[dict[str, Any]] = [
+        {"limit": 100, "window": "60s"},
+        {"limit": 100, "windowMilliseconds": 60_000, "requestCost": 1},
+        {"limit": 100.5, "window": "60s", "requestCost": 1},
+        {"limit": 100, "window": "60s", "requestCost": 1.5},
+        {"limit": 0, "window": "60s", "requestCost": 1},
+        {"limit": 1_000_001, "window": "60s", "requestCost": 1},
+        {"limit": 100, "window": "0s", "requestCost": 1},
+        {"limit": 100, "window": "60s", "requestCost": 0},
+        {"limit": 100, "window": "60s", "requestCost": 1_000_001},
+        {"limit": 100, "window": "60s", "requestCost": 1, "capacity": 100},
+    ]
+
+    invalid_documents = []
+    for configuration in configurations:
+        document = json.loads(json.dumps(valid))
+        document["algorithm"]["configuration"] = configuration
+        invalid_documents.append(document)
+
+    assert all(list(validator.iter_errors(document)) for document in invalid_documents)
+
+
 def test_algorithm_union_rejects_unknown_missing_cross_algorithm_and_decimal_values() -> None:
     """Algorithm branches are closed and contain only their typed integer configuration."""
     schema = load_json(CONTRACTS_ROOT / "policy.schema.json")
@@ -152,3 +185,13 @@ def test_phase_four_admin_openapi_is_valid_and_complete() -> None:
     }
     assert required_paths <= set(document["paths"])
     assert document["components"]["securitySchemes"]["adminBearer"]["scheme"] == "bearer"
+    algorithm = document["components"]["schemas"]["Algorithm"]
+    assert algorithm["discriminator"]["mapping"] == {
+        "FIXED_WINDOW": "#/components/schemas/FixedWindowAlgorithm",
+        "TOKEN_BUCKET": "#/components/schemas/TokenBucketAlgorithm",
+        "SLIDING_WINDOW_COUNTER": "#/components/schemas/SlidingWindowCounterAlgorithm",
+    }
+    match_types = document["components"]["schemas"]["MatchTestResponse"]["properties"]["algorithm"][
+        "enum"
+    ]
+    assert match_types == ["FIXED_WINDOW", "TOKEN_BUCKET", "SLIDING_WINDOW_COUNTER", None]

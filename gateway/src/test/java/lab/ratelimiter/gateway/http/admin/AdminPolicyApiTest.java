@@ -24,8 +24,10 @@ import lab.ratelimiter.gateway.policy.control.PolicyEvent;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
 import lab.ratelimiter.gateway.policy.control.RefillPeriod;
+import lab.ratelimiter.gateway.policy.control.SlidingWindowCounterAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
 import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
+import lab.ratelimiter.gateway.policy.control.WindowDuration;
 import lab.ratelimiter.gateway.policy.persistence.PolicySummary;
 import lab.ratelimiter.gateway.policy.persistence.PostgresPolicyRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -420,6 +422,86 @@ class AdminPolicyApiTest {
   }
 
   @Test
+  void createsAndMatchTestsTypedSlidingCountersWithoutLoadingRuntimeState() {
+    when(repository.createPolicy(
+            eq("catalog-sliding"), eq("Catalog sliding"), eq(1L), any(), eq("local-admin"), any()))
+        .thenReturn(Mono.just(slidingCounterStored()));
+
+    client
+        .post()
+        .uri("/admin/api/v1/policies")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(slidingCounterCreateJson(slidingCounterAlgorithmJson()))
+        .exchange()
+        .expectStatus()
+        .isCreated()
+        .expectBody()
+        .jsonPath("$.algorithm.type")
+        .isEqualTo("SLIDING_WINDOW_COUNTER")
+        .jsonPath("$.algorithm.configuration.limit")
+        .isEqualTo(100)
+        .jsonPath("$.algorithm.configuration.window")
+        .isEqualTo("60s")
+        .jsonPath("$.algorithm.configuration.requestCost")
+        .isEqualTo(3);
+
+    client
+        .post()
+        .uri("/admin/api/v1/policies/match-test")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(
+            """
+            {"request":{"method":"GET","path":"/proxy/catalog/items","headers":{"X-Client-Id":"client-a"}},"candidate":%s}
+            """
+                .formatted(slidingCounterDefinitionJson(slidingCounterAlgorithmJson())))
+        .exchange()
+        .expectStatus()
+        .isOk()
+        .expectBody()
+        .jsonPath("$.matched")
+        .isEqualTo(true)
+        .jsonPath("$.algorithm")
+        .isEqualTo("SLIDING_WINDOW_COUNTER");
+
+    verify(repository, org.mockito.Mockito.never()).loadActiveSet();
+  }
+
+  @Test
+  void rejectsMalformedAndCrossAlgorithmSlidingCounterFields() {
+    for (String algorithm :
+        List.of(
+            "{\"type\":\"SLIDING_WINDOW_COUNTER\",\"configuration\":{\"limit\":100,\"windowMilliseconds\":60000,\"requestCost\":1}}",
+            "{\"type\":\"SLIDING_WINDOW_COUNTER\",\"configuration\":{\"limit\":100.5,\"window\":\"60s\",\"requestCost\":1}}",
+            "{\"type\":\"SLIDING_WINDOW_COUNTER\",\"configuration\":{\"limit\":100,\"window\":\"60s\",\"requestCost\":1,\"capacity\":100}}")) {
+      client
+          .post()
+          .uri("/admin/api/v1/policies")
+          .contentType(MediaType.APPLICATION_JSON)
+          .bodyValue(slidingCounterCreateJson(algorithm))
+          .exchange()
+          .expectStatus()
+          .isBadRequest()
+          .expectBody()
+          .jsonPath("$.error")
+          .isEqualTo("INVALID_REQUEST_BODY");
+    }
+
+    client
+        .post()
+        .uri("/admin/api/v1/policies")
+        .contentType(MediaType.APPLICATION_JSON)
+        .bodyValue(
+            slidingCounterCreateJson(
+                "{\"type\":\"SLIDING_WINDOW_COUNTER\",\"configuration\":{\"limit\":100,\"window\":\"60s\"}}"))
+        .exchange()
+        .expectStatus()
+        .isEqualTo(422)
+        .expectBody()
+        .jsonPath("$.error")
+        .isEqualTo("POLICY_VALIDATION_FAILED");
+  }
+
+  @Test
   void rejectsUnknownMissingCrossAlgorithmDecimalAndUnknownTokenBucketFields() {
     for (String algorithm :
         List.of(
@@ -689,6 +771,50 @@ class AdminPolicyApiTest {
         "local-admin",
         null,
         null);
+  }
+
+  private static StoredPolicyVersion slidingCounterStored() {
+    return new StoredPolicyVersion(
+        "catalog-sliding",
+        "Catalog sliding",
+        1,
+        PolicyLifecycle.DRAFT,
+        0,
+        new PolicyDefinition(
+            "Catalog sliding policy",
+            "catalog.items",
+            "/proxy/catalog/items",
+            List.of("GET"),
+            List.of(
+                new PolicyIdentityComponent("HEADER", "X-Client-Id"),
+                new PolicyIdentityComponent("ROUTE", null)),
+            new SlidingWindowCounterAlgorithmDefinition(100, WindowDuration.parse("60s"), 3),
+            FailureMode.FAIL_CLOSED,
+            100),
+        NOW,
+        "local-admin",
+        null,
+        null);
+  }
+
+  private static String slidingCounterCreateJson(String algorithmJson) {
+    return """
+        {"policyId":"catalog-sliding","name":"Catalog sliding","version":1,"definition":%s}
+        """
+        .formatted(slidingCounterDefinitionJson(algorithmJson));
+  }
+
+  private static String slidingCounterDefinitionJson(String algorithmJson) {
+    return """
+        {"description":"Catalog sliding policy","match":{"routeId":"catalog.items","path":"/proxy/catalog/items","methods":["GET"]},"identity":{"components":[{"type":"HEADER","name":"X-Client-Id"},{"type":"ROUTE"}]},"algorithm":%s,"failureMode":"FAIL_CLOSED","priority":100}
+        """
+        .formatted(algorithmJson);
+  }
+
+  private static String slidingCounterAlgorithmJson() {
+    return """
+        {"type":"SLIDING_WINDOW_COUNTER","configuration":{"limit":100,"window":"60s","requestCost":3}}
+        """;
   }
 
   private static String tokenBucketCreateJson(String algorithmJson) {

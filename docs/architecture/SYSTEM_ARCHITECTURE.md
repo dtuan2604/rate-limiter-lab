@@ -79,11 +79,12 @@ Forbidden in distributed mode:
 
 ## 3. Request path
 
-The implemented Phase 5 catalog path is:
+The implemented Phase 6 catalog path is:
 
 ```text
 client -> HAProxy -> gateway-1|gateway-2|gateway-3
-       -> captured PostgreSQL-loaded snapshot -> typed Fixed Window or Token Bucket adapter
+       -> captured PostgreSQL-loaded snapshot
+       -> typed Fixed Window, Token Bucket, or Sliding Window Counter adapter
        -> Redis Lua -> mock catalog service
 ```
 
@@ -146,6 +147,16 @@ ratelimit:{p=<base64url-policy-id>:v=<version>:a=token-bucket:i=<sha256>}
 
 Its exact arithmetic, three-field hash, reconstruction, TTL, headers, and Phase
 1 compatibility are specified in `docs/architecture/DISTRIBUTED_TOKEN_BUCKET.md`.
+
+The Sliding Window Counter pattern is:
+
+```text
+ratelimit:{p=<base64url-policy-id>:v=<version>:a=sliding-window-counter:i=<sha256>}
+```
+
+Its integer weighting, three-field hash, rotation, semantic TTL, analytical
+retry timing, headers, and approximation behavior are specified in
+`docs/architecture/DISTRIBUTED_SLIDING_WINDOW_COUNTER.md`.
 
 Requirements:
 

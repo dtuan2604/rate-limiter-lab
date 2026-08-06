@@ -324,24 +324,29 @@ periodic reconciliation, immutable per-request snapshots, and per-replica
 snapshot visibility. Runtime fixed-window state remains in Redis and versioned
 policy changes intentionally start fresh enforcement state.
 
-### Phase 5 — remaining distributed algorithms
+### Phase 5 — distributed Token Bucket
 
-Implement and verify one algorithm at a time, starting with token bucket, then
-sliding counter, sliding log, and finally leaky-bucket policing.
+Implement and verify Token Bucket as the second distributed algorithm.
 
-### Phase 6 — traffic simulator and all mock services
+### Phase 6 — distributed Sliding Window Counter
+
+Implement and verify Sliding Window Counter as the third distributed algorithm,
+including exact weighted arithmetic, atomic rotation, analytical retry timing,
+multi-replica boundary proof, and approximation analysis.
+
+### Phase 7 — traffic simulator and all mock services
 
 Complete scenarios and experiment reporting.
 
-### Phase 7 — admin portal
+### Phase 8 — admin portal
 
 Implement portal flows against tested schemas and APIs.
 
-### Phase 8 — observability and failure experiments
+### Phase 9 — observability and failure experiments
 
 Complete dashboards, controlled failures, scaling demonstrations, and documented experiments.
 
-### Phase 9 — optional distributed request queue
+### Phase 10 — optional distributed request queue
 
 Proceed only after approval of delivery-semantics ADR and proof that the policing implementation is complete.
 

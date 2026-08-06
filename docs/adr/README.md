@@ -31,3 +31,10 @@ Initial records in this directory capture already-approved project decisions. Co
 - `0025` — semantically safe Token Bucket TTL.
 - `0026` — closed typed multi-algorithm policy representation.
 - `0027` — Token Bucket-specific response-header meanings.
+
+## Phase 6 decisions
+
+- `0028` — bounded exact integer arithmetic for weighted admission.
+- `0029` — atomic Redis state rotation, namespace, and semantic TTL.
+- `0030` — exact analytical retry-after timing.
+- `0031` — Sliding Window Counter-specific response-header meanings.

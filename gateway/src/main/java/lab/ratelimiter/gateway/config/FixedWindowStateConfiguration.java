@@ -4,9 +4,12 @@ import java.time.Clock;
 import java.util.List;
 import lab.ratelimiter.gateway.application.FixedWindowStateAdapter;
 import lab.ratelimiter.gateway.application.InMemoryFixedWindowStateAdapter;
+import lab.ratelimiter.gateway.application.InMemorySlidingWindowCounterStateAdapter;
 import lab.ratelimiter.gateway.application.InMemoryTokenBucketStateAdapter;
+import lab.ratelimiter.gateway.application.SlidingWindowCounterStateAdapter;
 import lab.ratelimiter.gateway.application.TokenBucketStateAdapter;
 import lab.ratelimiter.gateway.state.redis.RedisFixedWindowStateAdapter;
+import lab.ratelimiter.gateway.state.redis.RedisSlidingWindowCounterStateAdapter;
 import lab.ratelimiter.gateway.state.redis.RedisTokenBucketStateAdapter;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnProperty;
@@ -37,6 +40,15 @@ public class FixedWindowStateConfiguration {
       havingValue = "IN_MEMORY")
   TokenBucketStateAdapter inMemoryTokenBucketStateAdapter(Clock gatewayClock) {
     return new InMemoryTokenBucketStateAdapter(gatewayClock);
+  }
+
+  @Bean
+  @ConditionalOnProperty(
+      prefix = "rate-limiter.gateway",
+      name = "state-backend",
+      havingValue = "IN_MEMORY")
+  SlidingWindowCounterStateAdapter inMemorySlidingWindowCounterStateAdapter(Clock gatewayClock) {
+    return new InMemorySlidingWindowCounterStateAdapter(gatewayClock);
   }
 
   @Bean
@@ -85,6 +97,30 @@ public class FixedWindowStateConfiguration {
       matchIfMissing = true)
   RedisScript<List<?>> tokenBucketScript() {
     return createScript("redis/token-bucket-v1.lua");
+  }
+
+  @Bean
+  @ConditionalOnProperty(
+      prefix = "rate-limiter.gateway",
+      name = "state-backend",
+      havingValue = "REDIS",
+      matchIfMissing = true)
+  SlidingWindowCounterStateAdapter redisSlidingWindowCounterStateAdapter(
+      ReactiveStringRedisTemplate redis,
+      @Qualifier("slidingWindowCounterScript") RedisScript<List<?>> slidingWindowCounterScript,
+      GatewayProperties properties) {
+    return new RedisSlidingWindowCounterStateAdapter(
+        redis, slidingWindowCounterScript, properties.redisCommandTimeout());
+  }
+
+  @Bean
+  @ConditionalOnProperty(
+      prefix = "rate-limiter.gateway",
+      name = "state-backend",
+      havingValue = "REDIS",
+      matchIfMissing = true)
+  RedisScript<List<?>> slidingWindowCounterScript() {
+    return createScript("redis/sliding-window-counter-v1.lua");
   }
 
   @SuppressWarnings({"rawtypes", "unchecked"})

@@ -21,8 +21,10 @@ import lab.ratelimiter.gateway.policy.control.PolicyAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.RefillPeriod;
+import lab.ratelimiter.gateway.policy.control.SlidingWindowCounterAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
 import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
+import lab.ratelimiter.gateway.policy.control.WindowDuration;
 import lab.ratelimiter.gateway.policy.persistence.PostgresPolicyRepository;
 import org.springframework.core.codec.DecodingException;
 import org.springframework.http.HttpHeaders;
@@ -464,10 +466,15 @@ public final class AdminPolicyHandler {
   @JsonTypeInfo(use = JsonTypeInfo.Id.NAME, include = JsonTypeInfo.As.PROPERTY, property = "type")
   @JsonSubTypes({
     @JsonSubTypes.Type(value = FixedWindowAlgorithmRequest.class, name = "FIXED_WINDOW"),
-    @JsonSubTypes.Type(value = TokenBucketAlgorithmRequest.class, name = "TOKEN_BUCKET")
+    @JsonSubTypes.Type(value = TokenBucketAlgorithmRequest.class, name = "TOKEN_BUCKET"),
+    @JsonSubTypes.Type(
+        value = SlidingWindowCounterAlgorithmRequest.class,
+        name = "SLIDING_WINDOW_COUNTER")
   })
   public sealed interface AlgorithmRequest
-      permits FixedWindowAlgorithmRequest, TokenBucketAlgorithmRequest {
+      permits FixedWindowAlgorithmRequest,
+          TokenBucketAlgorithmRequest,
+          SlidingWindowCounterAlgorithmRequest {
     PolicyAlgorithmDefinition toDomain();
   }
 
@@ -495,6 +502,18 @@ public final class AdminPolicyHandler {
     }
   }
 
+  public record SlidingWindowCounterAlgorithmRequest(
+      SlidingWindowCounterConfigurationRequest configuration) implements AlgorithmRequest {
+    @Override
+    public PolicyAlgorithmDefinition toDomain() {
+      Objects.requireNonNull(configuration, "configuration");
+      return new SlidingWindowCounterAlgorithmDefinition(
+          configuration.limit(),
+          WindowDuration.parse(configuration.window()),
+          configuration.requestCost());
+    }
+  }
+
   public record FixedWindowConfigurationRequest(long limit, long windowMilliseconds) {}
 
   public record TokenBucketConfigurationRequest(
@@ -503,6 +522,9 @@ public final class AdminPolicyHandler {
       long refillTokens,
       String refillPeriod,
       long requestCost) {}
+
+  public record SlidingWindowCounterConfigurationRequest(
+      long limit, String window, long requestCost) {}
 
   public record MatchTestRequest(SampleRequest request, DefinitionRequest candidate) {}
 
@@ -569,6 +591,13 @@ public final class AdminPolicyHandler {
                 tokenBucket.refillTokens(),
                 tokenBucket.refillPeriod().toString(),
                 tokenBucket.requestCost()));
+      }
+      if (algorithm instanceof SlidingWindowCounterAlgorithmDefinition slidingCounter) {
+        return new SlidingWindowCounterAlgorithmRequest(
+            new SlidingWindowCounterConfigurationRequest(
+                slidingCounter.limit(),
+                slidingCounter.window().toString(),
+                slidingCounter.requestCost()));
       }
       throw new IllegalArgumentException("unsupported policy algorithm");
     }

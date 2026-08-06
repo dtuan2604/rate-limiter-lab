@@ -220,11 +220,13 @@ components:
       oneOf:
         - $ref: '#/components/schemas/FixedWindowAlgorithm'
         - $ref: '#/components/schemas/TokenBucketAlgorithm'
+        - $ref: '#/components/schemas/SlidingWindowCounterAlgorithm'
       discriminator:
         propertyName: type
         mapping:
           FIXED_WINDOW: '#/components/schemas/FixedWindowAlgorithm'
           TOKEN_BUCKET: '#/components/schemas/TokenBucketAlgorithm'
+          SLIDING_WINDOW_COUNTER: '#/components/schemas/SlidingWindowCounterAlgorithm'
     FixedWindowAlgorithm:
       type: object
       additionalProperties: false
@@ -254,6 +256,20 @@ components:
             refillTokens: {type: integer, minimum: 1, maximum: 100000}
             refillPeriod: {type: string, pattern: '^[1-9][0-9]*(?:ms|s|m|h|d)$'}
             requestCost: {type: integer, minimum: 1, maximum: 100000}
+    SlidingWindowCounterAlgorithm:
+      type: object
+      additionalProperties: false
+      required: [type, configuration]
+      properties:
+        type: {const: SLIDING_WINDOW_COUNTER}
+        configuration:
+          type: object
+          additionalProperties: false
+          required: [limit, window, requestCost]
+          properties:
+            limit: {type: integer, minimum: 1, maximum: 1000000}
+            window: {type: string, pattern: '^[1-9][0-9]*(?:ms|s|m|h|d)$'}
+            requestCost: {type: integer, minimum: 1, maximum: 1000000}
     CreatePolicyRequest:
       allOf:
         - type: object
@@ -323,7 +339,7 @@ components:
         matched: {type: boolean}
         policyId: {type: [string, 'null']}
         version: {type: [integer, 'null'], minimum: 1}
-        algorithm: {type: [string, 'null'], enum: [FIXED_WINDOW, TOKEN_BUCKET, null]}
+        algorithm: {type: [string, 'null'], enum: [FIXED_WINDOW, TOKEN_BUCKET, SLIDING_WINDOW_COUNTER, null]}
         explanation: {type: array, items: {type: string}}
     AdminError:
       type: object

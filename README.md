@@ -1,7 +1,7 @@
 # Rate Limiter Lab
 
-Phase 4 provides a PostgreSQL-backed policy control plane and a distributed
-fixed-window data plane:
+Phase 6 provides a PostgreSQL-backed policy control plane and three distributed
+rate-limiting algorithms:
 
 ```text
 Admin client -> authenticated gateway admin API -> PostgreSQL -> durable outbox
@@ -12,8 +12,8 @@ GET /proxy/catalog/items -> HAProxy -> gateway snapshot -> Redis Lua -> catalog
 ```
 
 PostgreSQL is authoritative for policy identity, versions, lifecycle, audit,
-and active-set revision. Redis is authoritative for fixed-window counters and
-expiration; Pub/Sub carries invalidation metadata only. Each gateway serves
+and active-set revision. Redis is authoritative for Fixed Window, Token Bucket,
+and Sliding Window Counter state; Pub/Sub carries invalidation metadata only. Each gateway serves
 requests from one atomically replaceable immutable snapshot and never queries
 PostgreSQL on the proxy request path.
 
@@ -86,7 +86,7 @@ Stop and remove the local environment:
 docker compose down --volumes --remove-orphans
 ```
 
-Run the retained and Phase 5 acceptance proofs:
+Run the retained and Phase 6 acceptance proofs:
 
 ```bash
 scripts/phase3-e2e.sh
@@ -95,6 +95,8 @@ scripts/phase4-e2e.sh
 scripts/phase4-publication-failure-e2e.sh
 scripts/phase5-token-bucket-e2e.sh
 scripts/phase5-token-bucket-resilience-e2e.sh
+scripts/phase6-sliding-window-counter-e2e.sh
+scripts/phase6-sliding-window-counter-resilience-e2e.sh
 ```
 
 The Phase 4 suites prove dynamic activation without gateway restart, convergence
@@ -106,3 +108,9 @@ algorithm switching, repeated multi-replica atomicity, missed-event recovery,
 restart/scale persistence, and both Redis failure modes. See
 `docs/architecture/DISTRIBUTED_TOKEN_BUCKET.md` for the exact compatibility and
 operational contract.
+The Phase 6 suites prove weighted enforcement, the Fixed Window boundary-burst
+comparison, costs greater than one, repeated shared-capacity and coordinated
+rotation trials, dynamic three-algorithm switching, missed-event recovery,
+version isolation, restart/scaling continuity, and both Redis failure modes.
+See `docs/architecture/DISTRIBUTED_SLIDING_WINDOW_COUNTER.md` and
+`docs/experiments/SLIDING_WINDOW_COUNTER_APPROXIMATION.md`.

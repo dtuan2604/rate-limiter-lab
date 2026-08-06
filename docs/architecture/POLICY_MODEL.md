@@ -46,9 +46,9 @@ repeat semantic checks.
 }
 ```
 
-Phase 5 supports only exact normalized `/proxy/**` paths, `GET`, identity
-`[HEADER:X-Client-Id, ROUTE]`, and the typed `FIXED_WINDOW | TOKEN_BUCKET`
-algorithm union. The persisted
+Phase 6 supports only exact normalized `/proxy/**` paths, `GET`, identity
+`[HEADER:X-Client-Id, ROUTE]`, and the typed
+`FIXED_WINDOW | TOKEN_BUCKET | SLIDING_WINDOW_COUNTER` algorithm union. The persisted
 `ROUTE` component compiles to the existing internal `ROUTE_ID` canonical tag
 and normalized route ID, preserving Redis identity/key compatibility.
 
@@ -62,11 +62,12 @@ and normalized route ID, preserving Redis identity/key compatibility.
 | `policy_version_identity_components` | Ordered typed identity members. |
 | `fixed_window_configurations` | Typed limit/window subtype for a policy version. |
 | `token_bucket_configurations` | Typed capacity/initial/refill-period/cost subtype for a policy version. |
+| `sliding_window_counter_configurations` | Typed limit/window amount+unit/request-cost subtype for a policy version. |
 | `policy_set_state` | Singleton authoritative active-set revision. |
 | `policy_audit` | Append-only action, actor, correlation, state change, validation outcome. |
 | `policy_event_outbox` | Durable publication intent, lease, attempt, retry, and outcome metadata. |
 
-The V1 and V2 Flyway migrations are forward-only. A partial unique index enforces at
+The V1, V2, and V3 Flyway migrations are forward-only. A partial unique index enforces at
 most one active version per policy. Check constraints bound values and supported
 enums. Triggers reject definition, method, identity, and algorithm-subtype mutations
 after first activation, including after disable/archive. Future algorithms use
@@ -134,6 +135,10 @@ Phase 4 bounds and rules are:
 - Token Bucket capacity/refill/cost are 1..100,000 whole tokens, initial is
   0..capacity, cost is at most capacity, refill period is an exact positive
   integer plus `ms|s|m|h|d` and at most one day, and empty-to-full is at most 30 days;
+- Sliding Window Counter limit is 1..1,000,000, request cost is 1..limit,
+  and window is an exact positive integer plus `ms|s|m|h|d` converting to
+  1..86,400,000 milliseconds; these bounds keep all Redis admission and TTL
+  arithmetic below Lua's exact integer ceiling;
 - failure mode is `FAIL_OPEN` or `FAIL_CLOSED`; priority is 0..1,000;
 - duplicate identity/method members, unsupported values, and unknown JSON
   fields are rejected.

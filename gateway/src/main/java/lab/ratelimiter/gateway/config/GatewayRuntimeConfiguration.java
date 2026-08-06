@@ -3,6 +3,7 @@ package lab.ratelimiter.gateway.config;
 import java.time.Clock;
 import lab.ratelimiter.gateway.application.FixedWindowStateAdapter;
 import lab.ratelimiter.gateway.application.RateLimitService;
+import lab.ratelimiter.gateway.application.SlidingWindowCounterStateAdapter;
 import lab.ratelimiter.gateway.application.TokenBucketStateAdapter;
 import lab.ratelimiter.gateway.http.GatewayHttpHandler;
 import lab.ratelimiter.gateway.http.GatewayRoutes;
@@ -37,8 +38,11 @@ public class GatewayRuntimeConfiguration {
 
   @Bean
   RateLimitService rateLimitService(
-      FixedWindowStateAdapter stateAdapter, TokenBucketStateAdapter tokenBucketStateAdapter) {
-    return new RateLimitService(stateAdapter, tokenBucketStateAdapter);
+      FixedWindowStateAdapter stateAdapter,
+      TokenBucketStateAdapter tokenBucketStateAdapter,
+      SlidingWindowCounterStateAdapter slidingWindowCounterStateAdapter) {
+    return new RateLimitService(
+        stateAdapter, tokenBucketStateAdapter, slidingWindowCounterStateAdapter);
   }
 
   @Bean

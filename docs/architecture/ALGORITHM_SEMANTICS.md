@@ -199,6 +199,20 @@ overestimated or underestimated until that previous count decays. Conservative
 whole-unit rounding can report less remaining capacity than the fractional
 mathematical remainder.
 
+### Phase 6 Redis representation
+
+Distributed mode uses the same scaled admission comparison but Redis server
+time and a three-field versioned hash. Rotation, admission, conditional
+increment, semantic expiry, and strict result construction occur in one Lua
+execution. Remaining is `max(0, floor((limit * W - numerator) / W))`; reset is
+when both represented contributions reach zero, not merely the next boundary.
+An older Redis window fails without mutation, while an earlier timestamp in the
+same window is evaluated conservatively.
+
+The exact key, 18-integer tuple, analytical retry calculation, numeric bounds,
+TTL, HTTP headers, and operational differences from the Phase 1 teaching model
+are specified in `docs/architecture/DISTRIBUTED_SLIDING_WINDOW_COUNTER.md`.
+
 ## Token Bucket
 
 ### Policy and state

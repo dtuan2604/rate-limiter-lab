@@ -56,6 +56,22 @@ public final class RateLimitDecisionLogger {
                     .addKeyValue("retryAfter", tokenBucket.retryAfter())
                     .addKeyValue("tokenBucketOutcome", tokenBucket.redisOutcome().name())
                     .addKeyValue("stateReconstructed", tokenBucket.stateReconstructed()));
+    evaluation
+        .slidingWindowCounterResult()
+        .ifPresent(
+            slidingCounter ->
+                event
+                    .addKeyValue("currentWindowId", slidingCounter.currentWindowId())
+                    .addKeyValue("currentWindowCount", slidingCounter.currentWindowCount())
+                    .addKeyValue("previousWindowCount", slidingCounter.previousWindowCount())
+                    .addKeyValue("windowElapsed", slidingCounter.windowElapsed())
+                    .addKeyValue("weightedNumerator", slidingCounter.weightedNumerator())
+                    .addKeyValue("weightedEstimate", slidingCounter.weightedEstimate())
+                    .addKeyValue("requestCost", slidingCounter.requestCost())
+                    .addKeyValue("remainingCapacity", slidingCounter.remainingCapacity())
+                    .addKeyValue("retryAfter", slidingCounter.retryAfter())
+                    .addKeyValue("windowRotation", slidingCounter.rotation().name())
+                    .addKeyValue("slidingCounterOutcome", slidingCounter.redisOutcome().name()));
     event.log("rate limit decision");
   }
 }

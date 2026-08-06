@@ -16,8 +16,10 @@ import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
 import lab.ratelimiter.gateway.policy.control.RefillPeriod;
+import lab.ratelimiter.gateway.policy.control.SlidingWindowCounterAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
 import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
+import lab.ratelimiter.gateway.policy.control.WindowDuration;
 import org.flywaydb.core.Flyway;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.BeforeEach;
@@ -140,6 +142,33 @@ class PostgresPolicyRepositoryTest {
         .singleElement()
         .extracting(StoredPolicyVersion::definition)
         .isEqualTo(tokenBucket);
+  }
+
+  @Test
+  void slidingCounterFieldsRoundTripExactlyAndRemainImmutableAfterActivation() {
+    PolicyDefinition slidingCounter = slidingCounterDefinition();
+    StoredPolicyVersion created =
+        repository
+            .createPolicy(
+                "catalog-sliding", "Catalog sliding", 1, slidingCounter, "admin", "create-sliding")
+            .block();
+
+    assertThat(created.definition()).isEqualTo(slidingCounter);
+    assertThat(repository.findVersion("catalog-sliding", 1).block().definition())
+        .isEqualTo(slidingCounter);
+    assertThat(repository.activate("catalog-sliding", 1, "admin", "activate-sliding").block())
+        .extracting(result -> result.policy().definition())
+        .isEqualTo(slidingCounter);
+    assertThat(repository.loadActiveSet().block().policies())
+        .singleElement()
+        .extracting(StoredPolicyVersion::definition)
+        .isEqualTo(slidingCounter);
+    assertThatThrownBy(
+            () ->
+                repository
+                    .replaceDraft("catalog-sliding", 1, 0, definition(7), "admin", "mutate-active")
+                    .block())
+        .hasMessageContaining("transition");
   }
 
   @Test
@@ -337,6 +366,20 @@ class PostgresPolicyRepositoryTest {
             new PolicyIdentityComponent("HEADER", "X-Client-Id"),
             new PolicyIdentityComponent("ROUTE", null)),
         new TokenBucketAlgorithmDefinition(10, 4, 2, RefillPeriod.parse("1s"), 3),
+        FailureMode.FAIL_CLOSED,
+        100);
+  }
+
+  private static PolicyDefinition slidingCounterDefinition() {
+    return new PolicyDefinition(
+        "Catalog weighted requests per client and route",
+        "catalog.items",
+        "/proxy/catalog/items",
+        List.of("GET"),
+        List.of(
+            new PolicyIdentityComponent("HEADER", "X-Client-Id"),
+            new PolicyIdentityComponent("ROUTE", null)),
+        new SlidingWindowCounterAlgorithmDefinition(100, WindowDuration.parse("60s"), 3),
         FailureMode.FAIL_CLOSED,
         100);
   }

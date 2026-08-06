@@ -6,10 +6,12 @@ import java.util.Objects;
 import lab.ratelimiter.gateway.domain.limiter.FixedWindowPolicy;
 import lab.ratelimiter.gateway.domain.limiter.PolicyId;
 import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
+import lab.ratelimiter.gateway.domain.limiter.SlidingWindowCounterPolicy;
 import lab.ratelimiter.gateway.domain.limiter.TokenBucketPolicy;
 import lab.ratelimiter.gateway.policy.control.ActivePolicySet;
 import lab.ratelimiter.gateway.policy.control.FixedWindowAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
+import lab.ratelimiter.gateway.policy.control.SlidingWindowCounterAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
 import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
 
@@ -58,6 +60,15 @@ public final class PolicySnapshotCompiler {
               Duration.ofMillis(tokenBucket.refillPeriod().toMilliseconds())),
           tokenBucket.requestCost(),
           stored.activatedAt());
+    }
+    if (definition.algorithm() instanceof SlidingWindowCounterAlgorithmDefinition slidingCounter) {
+      return new CompiledSlidingWindowCounterAlgorithm(
+          new SlidingWindowCounterPolicy(
+              policyId,
+              version,
+              slidingCounter.limit(),
+              Duration.ofMillis(slidingCounter.window().toMilliseconds())),
+          slidingCounter.requestCost());
     }
     throw new IllegalArgumentException("Unsupported policy algorithm");
   }

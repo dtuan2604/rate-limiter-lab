@@ -1,0 +1,33 @@
+{
+  "policyId": "catalog-client-sliding-counter",
+  "name": "Catalog client sliding counter",
+  "version": 3,
+  "status": "DRAFT",
+  "revision": 0,
+  "description": "Weighted request history per client and route",
+  "match": {
+    "routeId": "catalog.items",
+    "path": "/proxy/catalog/items",
+    "methods": ["GET"]
+  },
+  "identity": {
+    "components": [
+      {"type": "HEADER", "name": "X-Client-Id"},
+      {"type": "ROUTE"}
+    ]
+  },
+  "algorithm": {
+    "type": "SLIDING_WINDOW_COUNTER",
+    "configuration": {
+      "limit": 100,
+      "window": "60s",
+      "requestCost": 1
+    }
+  },
+  "failureMode": "FAIL_CLOSED",
+  "priority": 100,
+  "createdAt": "2026-08-05T12:00:00Z",
+  "createdBy": "local-admin",
+  "activatedAt": null,
+  "activatedBy": null
+}

@@ -269,3 +269,40 @@ scripts/verify.sh
 
 The detailed Phase 5 milestone and RED-GREEN-REFACTOR evidence is recorded in
 the completed Phase 5 ExecPlan.
+
+## Phase 6 Sliding Window Counter
+
+Focused implementation verification:
+
+```bash
+conda run -n rate-limiter python -m pytest contracts/tests -q
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:test \
+  --tests '*SlidingWindowCounterPolicyDefinitionTest' \
+  --tests '*PolicyMigrationTest' \
+  --tests '*PostgresPolicyRepositoryTest' --no-daemon
+JAVA_HOME=$(/usr/libexec/java_home -v 21) ./gradlew :gateway:test \
+  --tests '*RedisSlidingWindowCounterArithmetic*' \
+  --tests '*SlidingWindowCounterApproximationTest' \
+  --tests '*RedisSlidingWindowCounterStateAdapterTest' --no-daemon
+```
+
+Composed behavior and resilience proof:
+
+```bash
+scripts/phase6-sliding-window-counter-e2e.sh
+scripts/phase6-sliding-window-counter-resilience-e2e.sh
+```
+
+The behavior program covers normal weighting, the Fixed Window boundary-burst
+comparison, cost three, three repeated 60-request HAProxy concurrency trials,
+three Redis-time-coordinated transition trials, exact backend delivery, replica
+distribution, TTL/state inspection, and Fixed→Sliding→Token→Sliding switching.
+The resilience program covers missed-event reconciliation, version isolation,
+gateway restart and replica removal/restoration, FAIL_OPEN degraded forwarding,
+and FAIL_CLOSED correlated 503 behavior. Both scripts install unconditional
+container/volume cleanup traps.
+
+The active Phase 6 ExecPlan records every observed RED/GREEN command, complete
+quality-gate output, and final repository evidence. The durable algorithm and
+experiment reports are `docs/architecture/DISTRIBUTED_SLIDING_WINDOW_COUNTER.md`
+and `docs/experiments/SLIDING_WINDOW_COUNTER_APPROXIMATION.md`.

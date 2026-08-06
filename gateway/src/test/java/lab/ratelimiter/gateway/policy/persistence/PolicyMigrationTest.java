@@ -38,6 +38,7 @@ class PolicyMigrationTest {
     Set<String> expected =
         Set.of(
             "fixed_window_configurations",
+            "sliding_window_counter_configurations",
             "token_bucket_configurations",
             "policies",
             "policy_audit",
@@ -54,7 +55,8 @@ class PolicyMigrationTest {
                 "SELECT table_name FROM information_schema.tables "
                     + "WHERE table_schema = 'public' AND table_name LIKE 'polic%' "
                     + "OR table_schema = 'public' AND table_name IN "
-                    + "('fixed_window_configurations', 'token_bucket_configurations')")) {
+                    + "('fixed_window_configurations', 'token_bucket_configurations', "
+                    + "'sliding_window_counter_configurations')")) {
       Set<String> actual = new TreeSet<>();
       while (result.next()) {
         actual.add(result.getString(1));
@@ -158,7 +160,103 @@ class PolicyMigrationTest {
   }
 
   @Test
-  void validPhaseFourDatabaseUpgradesToV2WithoutChangingFixedWindowData() throws SQLException {
+  void slidingCounterSubtypeConstraintsDiscriminatorAndImmutabilityAreEnforced()
+      throws SQLException {
+    try (Connection connection = POSTGRES.createConnection("");
+        Statement statement = connection.createStatement()) {
+      insertPolicy(statement, "migration-sliding");
+      insertSlidingVersion(statement, "migration-sliding", 1, "DRAFT", false);
+      statement.executeUpdate(
+          "INSERT INTO sliding_window_counter_configurations(policy_id, version, "
+              + "algorithm_type, request_limit, window_amount, window_unit, request_cost) "
+              + "VALUES ('migration-sliding', 1, 'SLIDING_WINDOW_COUNTER', 100, 60, 's', 3)");
+
+      assertThatThrownBy(
+              () ->
+                  statement.executeUpdate(
+                      "INSERT INTO fixed_window_configurations(policy_id, version, "
+                          + "algorithm_type, request_limit, window_milliseconds) VALUES "
+                          + "('migration-sliding', 1, 'FIXED_WINDOW', 5, 1000)"))
+          .isInstanceOf(SQLException.class);
+      assertThatThrownBy(
+              () ->
+                  statement.executeUpdate(
+                      "UPDATE sliding_window_counter_configurations SET request_cost = 101 "
+                          + "WHERE policy_id = 'migration-sliding' AND version = 1"))
+          .isInstanceOf(SQLException.class);
+
+      statement.executeUpdate(
+          "UPDATE policy_versions SET lifecycle_status = 'ACTIVE', "
+              + "activated_at = CURRENT_TIMESTAMP, activated_by = 'test' "
+              + "WHERE policy_id = 'migration-sliding' AND version = 1");
+      assertThatThrownBy(
+              () ->
+                  statement.executeUpdate(
+                      "UPDATE sliding_window_counter_configurations SET request_limit = 101 "
+                          + "WHERE policy_id = 'migration-sliding' AND version = 1"))
+          .isInstanceOf(SQLException.class)
+          .hasMessageContaining("activated policy child definition is immutable");
+    }
+  }
+
+  @Test
+  void validPhaseFiveDatabaseUpgradesToV3WithoutChangingExistingAlgorithmData()
+      throws SQLException {
+    String schema = "phase5_upgrade";
+    try (Connection connection = POSTGRES.createConnection("");
+        Statement statement = connection.createStatement()) {
+      statement.executeUpdate("CREATE SCHEMA " + schema);
+    }
+    Flyway phaseFive =
+        Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema)
+            .defaultSchema(schema)
+            .locations("classpath:db/migration")
+            .target("2")
+            .load();
+    assertThat(phaseFive.migrate().migrationsExecuted).isEqualTo(2);
+
+    try (Connection connection = POSTGRES.createConnection("");
+        Statement statement = connection.createStatement()) {
+      statement.execute("SET search_path TO " + schema);
+      insertPolicy(statement, "phase5-fixed");
+      insertVersion(statement, "phase5-fixed", 1, "DRAFT", false);
+      statement.executeUpdate(
+          "INSERT INTO fixed_window_configurations(policy_id, version, request_limit, "
+              + "window_milliseconds) VALUES ('phase5-fixed', 1, 5, 10000)");
+      insertPolicy(statement, "phase5-token");
+      insertTokenVersion(statement, "phase5-token", 1, "DRAFT", false);
+      statement.executeUpdate(
+          "INSERT INTO token_bucket_configurations(policy_id, version, capacity, "
+              + "initial_tokens, refill_tokens, refill_period_amount, refill_period_unit, "
+              + "request_cost) VALUES ('phase5-token', 1, 10, 4, 2, 1, 's', 3)");
+    }
+
+    Flyway upgraded =
+        Flyway.configure()
+            .dataSource(POSTGRES.getJdbcUrl(), POSTGRES.getUsername(), POSTGRES.getPassword())
+            .schemas(schema)
+            .defaultSchema(schema)
+            .locations("classpath:db/migration")
+            .load();
+    assertThat(upgraded.migrate().migrationsExecuted).isEqualTo(1);
+
+    try (Connection connection = POSTGRES.createConnection("");
+        Statement statement = connection.createStatement()) {
+      statement.execute("SET search_path TO " + schema);
+      try (ResultSet result =
+          statement.executeQuery("SELECT algorithm_type FROM policy_versions ORDER BY policy_id")) {
+        assertThat(result.next()).isTrue();
+        assertThat(result.getString(1)).isEqualTo("FIXED_WINDOW");
+        assertThat(result.next()).isTrue();
+        assertThat(result.getString(1)).isEqualTo("TOKEN_BUCKET");
+      }
+    }
+  }
+
+  @Test
+  void validPhaseFourDatabaseUpgradesThroughV3WithoutChangingFixedWindowData() throws SQLException {
     String schema = "phase4_upgrade";
     try (Connection connection = POSTGRES.createConnection("");
         Statement statement = connection.createStatement()) {
@@ -195,7 +293,7 @@ class PolicyMigrationTest {
             .defaultSchema(schema)
             .locations("classpath:db/migration")
             .load();
-    assertThat(upgraded.migrate().migrationsExecuted).isEqualTo(1);
+    assertThat(upgraded.migrate().migrationsExecuted).isEqualTo(2);
 
     try (Connection connection = POSTGRES.createConnection("");
         Statement statement = connection.createStatement()) {
@@ -262,6 +360,28 @@ class PolicyMigrationTest {
             + status
             + "', NULL, 'catalog.items', '/proxy/catalog/items', "
             + "'TOKEN_BUCKET', 'FAIL_CLOSED', 100, 'test'"
+            + activatedValues
+            + ")");
+  }
+
+  private static void insertSlidingVersion(
+      Statement statement, String id, long version, String status, boolean activated)
+      throws SQLException {
+    String activatedFields = activated ? ", activated_at, activated_by" : "";
+    String activatedValues = activated ? ", CURRENT_TIMESTAMP, 'test'" : "";
+    statement.executeUpdate(
+        "INSERT INTO policy_versions("
+            + "policy_id, version, lifecycle_status, description, route_id, route_path, "
+            + "algorithm_type, failure_mode, priority, created_by"
+            + activatedFields
+            + ") VALUES ('"
+            + id
+            + "', "
+            + version
+            + ", '"
+            + status
+            + "', NULL, 'catalog.items', '/proxy/catalog/items', "
+            + "'SLIDING_WINDOW_COUNTER', 'FAIL_CLOSED', 100, 'test'"
             + activatedValues
             + ")");
   }

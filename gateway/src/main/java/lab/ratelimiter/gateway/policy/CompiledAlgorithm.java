@@ -3,7 +3,9 @@ package lab.ratelimiter.gateway.policy;
 import lab.ratelimiter.gateway.domain.limiter.RateLimitPolicy;
 
 public sealed interface CompiledAlgorithm
-    permits CompiledFixedWindowAlgorithm, CompiledTokenBucketAlgorithm {
+    permits CompiledFixedWindowAlgorithm,
+        CompiledTokenBucketAlgorithm,
+        CompiledSlidingWindowCounterAlgorithm {
 
   RateLimitPolicy policy();
 }

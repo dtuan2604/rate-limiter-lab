@@ -17,8 +17,10 @@ import lab.ratelimiter.gateway.policy.control.PolicyDefinition;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
 import lab.ratelimiter.gateway.policy.control.RefillPeriod;
+import lab.ratelimiter.gateway.policy.control.SlidingWindowCounterAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
 import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
+import lab.ratelimiter.gateway.policy.control.WindowDuration;
 import lab.ratelimiter.gateway.policy.persistence.PostgresPolicyRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -165,6 +167,32 @@ class PolicySnapshotRefreshTest {
     assertThat(store.current().revision()).isEqualTo(1);
   }
 
+  @Test
+  void dynamicallySwitchesAcrossAllThreeAlgorithmsAndReconciliationNeverRegresses() {
+    when(repository.loadActiveSet())
+        .thenReturn(Mono.just(new ActivePolicySet(1, List.of(stored(1)))))
+        .thenReturn(Mono.just(new ActivePolicySet(2, List.of(slidingStored(2, 5)))))
+        .thenReturn(Mono.just(new ActivePolicySet(3, List.of(tokenStored(3, NOW)))))
+        .thenReturn(Mono.just(new ActivePolicySet(2, List.of(slidingStored(2, 5)))))
+        .thenReturn(Mono.just(new ActivePolicySet(4, List.of(slidingStored(4, 9)))));
+
+    coordinator.refresh(1, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledFixedWindowAlgorithm.class);
+    coordinator.refresh(2, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledSlidingWindowCounterAlgorithm.class);
+    coordinator.refresh(3, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOf(CompiledTokenBucketAlgorithm.class);
+    coordinator.refresh(2, ReloadTrigger.POLICY_EVENT).block();
+    assertThat(store.current().revision()).isEqualTo(4);
+    assertThat(store.current().policies().getFirst().compiledAlgorithm())
+        .isInstanceOfSatisfying(
+            CompiledSlidingWindowCounterAlgorithm.class,
+            sliding -> assertThat(sliding.policy().limit()).isEqualTo(9));
+  }
+
   private static StoredPolicyVersion stored(long version) {
     return new StoredPolicyVersion(
         "catalog",
@@ -212,5 +240,29 @@ class PolicySnapshotRefreshTest {
         "admin",
         activatedAt,
         activatedAt == null ? null : "admin");
+  }
+
+  private static StoredPolicyVersion slidingStored(long version, long limit) {
+    return new StoredPolicyVersion(
+        "catalog",
+        "Catalog",
+        version,
+        PolicyLifecycle.ACTIVE,
+        0,
+        new PolicyDefinition(
+            null,
+            "catalog.items",
+            "/proxy/catalog/items",
+            List.of("GET"),
+            List.of(
+                new PolicyIdentityComponent("HEADER", "X-Client-Id"),
+                new PolicyIdentityComponent("ROUTE", null)),
+            new SlidingWindowCounterAlgorithmDefinition(limit, WindowDuration.parse("10s"), 1),
+            FailureMode.FAIL_OPEN,
+            200),
+        NOW.minusSeconds(30),
+        "admin",
+        NOW,
+        "admin");
   }
 }

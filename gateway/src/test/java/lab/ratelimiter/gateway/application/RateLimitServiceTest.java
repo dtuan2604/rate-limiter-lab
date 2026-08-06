@@ -10,10 +10,12 @@ import lab.ratelimiter.gateway.domain.limiter.FixedWindowPolicy;
 import lab.ratelimiter.gateway.domain.limiter.PolicyId;
 import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
 import lab.ratelimiter.gateway.domain.limiter.RateLimitDecision;
+import lab.ratelimiter.gateway.domain.limiter.SlidingWindowCounterPolicy;
 import lab.ratelimiter.gateway.domain.limiter.TokenBucketPolicy;
 import lab.ratelimiter.gateway.identity.ClientIdentityExtractor;
 import lab.ratelimiter.gateway.identity.LimiterIdentity;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
+import lab.ratelimiter.gateway.policy.CompiledSlidingWindowCounterAlgorithm;
 import lab.ratelimiter.gateway.policy.CompiledTokenBucketAlgorithm;
 import org.junit.jupiter.api.Test;
 import reactor.core.publisher.Mono;
@@ -164,6 +166,72 @@ class RateLimitServiceTest {
     assertThat(evaluation.outcome()).isEqualTo(RateLimitOutcome.ALLOW);
     assertThat(evaluation.tokenBucketResult()).isPresent();
     assertThat(evaluation.rateLimitDecision().orElseThrow().remaining()).isEqualTo(7);
+  }
+
+  @Test
+  void slidingCounterDispatchesToItsTypedAdapterAndRetainsSpecificMetadata() {
+    CompiledPolicy slidingPolicy =
+        new CompiledPolicy(
+            "catalog.items",
+            "/proxy/catalog/items",
+            "GET",
+            new CompiledSlidingWindowCounterAlgorithm(
+                new SlidingWindowCounterPolicy(
+                    new PolicyId("catalog-sliding"),
+                    new PolicyVersion(3),
+                    10,
+                    Duration.ofSeconds(10)),
+                3),
+            FailureMode.FAIL_CLOSED,
+            100);
+    LimiterIdentity identity =
+        identityExtractor.extract("client-sliding", slidingPolicy.routeId()).orElseThrow();
+    FixedWindowStateAdapter fixed =
+        (policy, ignoredIdentity, request) ->
+            Mono.error(new AssertionError("Fixed Window adapter must not be called"));
+    TokenBucketStateAdapter token =
+        (policy, cost, activation, ignoredIdentity) ->
+            Mono.error(new AssertionError("Token Bucket adapter must not be called"));
+    SlidingWindowCounterStateAdapter sliding =
+        (policy, cost, ignoredIdentity) -> {
+          assertThat(policy.policyId().value()).isEqualTo("catalog-sliding");
+          assertThat(cost).isEqualTo(3);
+          RateLimitDecision decision =
+              new RateLimitDecision(
+                  true,
+                  10,
+                  7,
+                  java.util.Optional.empty(),
+                  java.util.Optional.of(START.plusSeconds(15)),
+                  policy.policyId(),
+                  policy.policyVersion(),
+                  policy.algorithm());
+          return Mono.just(
+              new SlidingWindowCounterStateResult(
+                  decision,
+                  10,
+                  3,
+                  2,
+                  Duration.ofSeconds(5),
+                  40,
+                  4,
+                  3,
+                  7,
+                  Duration.ZERO,
+                  Duration.ofSeconds(15),
+                  START,
+                  Duration.ofSeconds(15),
+                  lab.ratelimiter.gateway.state.redis.SlidingCounterRotation.SAME,
+                  StateBackend.REDIS,
+                  RedisOutcome.ALLOWED));
+        };
+
+    RateLimitEvaluation evaluation =
+        new RateLimitService(fixed, token, sliding).evaluate(slidingPolicy, identity).block();
+
+    assertThat(evaluation.outcome()).isEqualTo(RateLimitOutcome.ALLOW);
+    assertThat(evaluation.slidingWindowCounterResult()).isPresent();
+    assertThat(evaluation.tokenBucketResult()).isEmpty();
   }
 
   private static final class MutableClock extends Clock {

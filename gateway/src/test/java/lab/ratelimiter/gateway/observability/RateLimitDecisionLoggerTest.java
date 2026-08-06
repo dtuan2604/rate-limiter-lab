@@ -10,16 +10,19 @@ import lab.ratelimiter.gateway.application.FailureMode;
 import lab.ratelimiter.gateway.application.RateLimitEvaluation;
 import lab.ratelimiter.gateway.application.RateLimitOutcome;
 import lab.ratelimiter.gateway.application.RedisOutcome;
+import lab.ratelimiter.gateway.application.SlidingWindowCounterStateResult;
 import lab.ratelimiter.gateway.application.StateBackend;
 import lab.ratelimiter.gateway.application.TokenBucketStateResult;
 import lab.ratelimiter.gateway.domain.limiter.FixedWindowPolicy;
 import lab.ratelimiter.gateway.domain.limiter.PolicyId;
 import lab.ratelimiter.gateway.domain.limiter.PolicyVersion;
 import lab.ratelimiter.gateway.domain.limiter.RateLimitDecision;
+import lab.ratelimiter.gateway.domain.limiter.SlidingWindowCounterPolicy;
 import lab.ratelimiter.gateway.domain.limiter.TokenBucketPolicy;
 import lab.ratelimiter.gateway.identity.ClientIdentityExtractor;
 import lab.ratelimiter.gateway.identity.LimiterIdentity;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
+import lab.ratelimiter.gateway.policy.CompiledSlidingWindowCounterAlgorithm;
 import lab.ratelimiter.gateway.policy.CompiledTokenBucketAlgorithm;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -134,6 +137,80 @@ class RateLimitDecisionLoggerTest {
     assertField(log, "tokenBucketOutcome", "REJECTED");
     assertField(log, "stateReconstructed", "true");
     assertThat(log).doesNotContain("secret-token-client").doesNotContain(identity.digest());
+  }
+
+  @Test
+  void logsSlidingCounterFieldsWithoutRawIdentity(CapturedOutput output) {
+    Instant now = Instant.parse("2026-08-05T12:00:00Z");
+    SlidingWindowCounterPolicy slidingPolicy =
+        new SlidingWindowCounterPolicy(
+            new PolicyId("catalog-sliding"), new PolicyVersion(3), 10, Duration.ofSeconds(10));
+    CompiledPolicy policy =
+        new CompiledPolicy(
+            "catalog.items",
+            "/proxy/catalog/items",
+            "GET",
+            new CompiledSlidingWindowCounterAlgorithm(slidingPolicy, 3),
+            FailureMode.FAIL_CLOSED,
+            100);
+    LimiterIdentity identity =
+        new ClientIdentityExtractor()
+            .extract("secret-sliding-client", policy.routeId())
+            .orElseThrow();
+    RateLimitDecision decision =
+        new RateLimitDecision(
+            false,
+            10,
+            2,
+            Optional.of(Duration.ofMillis(750)),
+            Optional.of(now.plusSeconds(15)),
+            slidingPolicy.policyId(),
+            slidingPolicy.policyVersion(),
+            slidingPolicy.algorithm());
+    SlidingWindowCounterStateResult slidingResult =
+        new SlidingWindowCounterStateResult(
+            decision,
+            42,
+            6,
+            4,
+            Duration.ofSeconds(5),
+            80,
+            8,
+            3,
+            2,
+            Duration.ofMillis(750),
+            Duration.ofSeconds(15),
+            now,
+            Duration.ofSeconds(15),
+            lab.ratelimiter.gateway.state.redis.SlidingCounterRotation.ADVANCE_ONE,
+            StateBackend.REDIS,
+            RedisOutcome.REJECTED);
+    RateLimitEvaluation evaluation =
+        new RateLimitEvaluation(
+            RateLimitOutcome.REJECT,
+            Optional.of(decision),
+            Optional.of(slidingResult.resetAfter()),
+            Optional.empty(),
+            Optional.of(slidingResult),
+            StateBackend.REDIS,
+            RedisOutcome.REJECTED,
+            FailureMode.FAIL_CLOSED);
+
+    new RateLimitDecisionLogger("gateway-4").log("correlation-3", policy, identity, evaluation);
+
+    String log = output.getAll();
+    assertField(log, "currentWindowId", "42");
+    assertField(log, "currentWindowCount", "6");
+    assertField(log, "previousWindowCount", "4");
+    assertField(log, "windowElapsed", "PT5S");
+    assertField(log, "weightedNumerator", "80");
+    assertField(log, "weightedEstimate", "8");
+    assertField(log, "requestCost", "3");
+    assertField(log, "remainingCapacity", "2");
+    assertField(log, "retryAfter", "PT0.75S");
+    assertField(log, "windowRotation", "ADVANCE_ONE");
+    assertField(log, "slidingCounterOutcome", "REJECTED");
+    assertThat(log).doesNotContain("secret-sliding-client").doesNotContain(identity.digest());
   }
 
   private static void assertField(String log, String name, String value) {

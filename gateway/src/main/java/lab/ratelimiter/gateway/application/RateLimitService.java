@@ -6,6 +6,7 @@ import lab.ratelimiter.gateway.domain.limiter.RateLimitRequest;
 import lab.ratelimiter.gateway.identity.LimiterIdentity;
 import lab.ratelimiter.gateway.policy.CompiledFixedWindowAlgorithm;
 import lab.ratelimiter.gateway.policy.CompiledPolicy;
+import lab.ratelimiter.gateway.policy.CompiledSlidingWindowCounterAlgorithm;
 import lab.ratelimiter.gateway.policy.CompiledTokenBucketAlgorithm;
 import lab.ratelimiter.gateway.state.redis.RedisStateException;
 import reactor.core.publisher.Mono;
@@ -14,26 +15,46 @@ public final class RateLimitService {
 
   private final FixedWindowStateAdapter fixedWindowStateAdapter;
   private final TokenBucketStateAdapter tokenBucketStateAdapter;
+  private final SlidingWindowCounterStateAdapter slidingWindowCounterStateAdapter;
   private final FailureMode legacyFailureMode;
 
   public RateLimitService(FixedWindowStateAdapter stateAdapter) {
-    this(stateAdapter, unsupportedTokenBucketAdapter(), null);
+    this(
+        stateAdapter,
+        unsupportedTokenBucketAdapter(),
+        unsupportedSlidingWindowCounterAdapter(),
+        null);
   }
 
   public RateLimitService(
       FixedWindowStateAdapter fixedWindowStateAdapter,
       TokenBucketStateAdapter tokenBucketStateAdapter) {
-    this(fixedWindowStateAdapter, tokenBucketStateAdapter, null);
+    this(
+        fixedWindowStateAdapter,
+        tokenBucketStateAdapter,
+        unsupportedSlidingWindowCounterAdapter(),
+        null);
+  }
+
+  public RateLimitService(
+      FixedWindowStateAdapter fixedWindowStateAdapter,
+      TokenBucketStateAdapter tokenBucketStateAdapter,
+      SlidingWindowCounterStateAdapter slidingWindowCounterStateAdapter) {
+    this(fixedWindowStateAdapter, tokenBucketStateAdapter, slidingWindowCounterStateAdapter, null);
   }
 
   private RateLimitService(
       FixedWindowStateAdapter fixedWindowStateAdapter,
       TokenBucketStateAdapter tokenBucketStateAdapter,
+      SlidingWindowCounterStateAdapter slidingWindowCounterStateAdapter,
       FailureMode failureMode) {
     this.fixedWindowStateAdapter =
         Objects.requireNonNull(fixedWindowStateAdapter, "fixedWindowStateAdapter");
     this.tokenBucketStateAdapter =
         Objects.requireNonNull(tokenBucketStateAdapter, "tokenBucketStateAdapter");
+    this.slidingWindowCounterStateAdapter =
+        Objects.requireNonNull(
+            slidingWindowCounterStateAdapter, "slidingWindowCounterStateAdapter");
     this.legacyFailureMode = failureMode;
   }
 
@@ -41,6 +62,7 @@ public final class RateLimitService {
     this(
         stateAdapter,
         unsupportedTokenBucketAdapter(),
+        unsupportedSlidingWindowCounterAdapter(),
         Objects.requireNonNull(failureMode, "failureMode"));
   }
 
@@ -66,6 +88,12 @@ public final class RateLimitService {
                   tokenBucket.activationTime(),
                   identity)
               .map(result -> tokenBucketEvaluation(result, effectiveFailureMode));
+    } else if (compiledPolicy.compiledAlgorithm()
+        instanceof CompiledSlidingWindowCounterAlgorithm slidingCounter) {
+      evaluation =
+          slidingWindowCounterStateAdapter
+              .decide(slidingCounter.policy(), slidingCounter.requestCost(), identity)
+              .map(result -> slidingCounterEvaluation(result, effectiveFailureMode));
     } else {
       return Mono.error(new IllegalArgumentException("Unsupported compiled policy algorithm"));
     }
@@ -97,6 +125,19 @@ public final class RateLimitService {
         failureMode);
   }
 
+  private static RateLimitEvaluation slidingCounterEvaluation(
+      SlidingWindowCounterStateResult result, FailureMode failureMode) {
+    return new RateLimitEvaluation(
+        result.decision().allowed() ? RateLimitOutcome.ALLOW : RateLimitOutcome.REJECT,
+        Optional.of(result.decision()),
+        Optional.of(result.resetAfter()),
+        Optional.empty(),
+        Optional.of(result),
+        result.stateBackend(),
+        result.redisOutcome(),
+        failureMode);
+  }
+
   private Mono<RateLimitEvaluation> failureEvaluation(
       RedisStateException failure, FailureMode failureMode) {
     RateLimitOutcome outcome =
@@ -117,5 +158,11 @@ public final class RateLimitService {
   private static TokenBucketStateAdapter unsupportedTokenBucketAdapter() {
     return (policy, requestCost, activationTime, identity) ->
         Mono.error(new IllegalStateException("Token Bucket state adapter is not configured"));
+  }
+
+  private static SlidingWindowCounterStateAdapter unsupportedSlidingWindowCounterAdapter() {
+    return (policy, requestCost, identity) ->
+        Mono.error(
+            new IllegalStateException("Sliding Window Counter state adapter is not configured"));
   }
 }

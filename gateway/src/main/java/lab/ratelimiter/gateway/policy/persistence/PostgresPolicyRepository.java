@@ -19,8 +19,10 @@ import lab.ratelimiter.gateway.policy.control.PolicyEvent;
 import lab.ratelimiter.gateway.policy.control.PolicyIdentityComponent;
 import lab.ratelimiter.gateway.policy.control.PolicyLifecycle;
 import lab.ratelimiter.gateway.policy.control.RefillPeriod;
+import lab.ratelimiter.gateway.policy.control.SlidingWindowCounterAlgorithmDefinition;
 import lab.ratelimiter.gateway.policy.control.StoredPolicyVersion;
 import lab.ratelimiter.gateway.policy.control.TokenBucketAlgorithmDefinition;
+import lab.ratelimiter.gateway.policy.control.WindowDuration;
 import org.springframework.r2dbc.core.DatabaseClient;
 import org.springframework.transaction.reactive.TransactionalOperator;
 import reactor.core.publisher.Flux;
@@ -76,6 +78,11 @@ public final class PostgresPolicyRepository {
               tb.capacity, tb.initial_tokens, tb.refill_tokens,
               tb.refill_period_amount, tb.refill_period_unit, tb.request_cost,
               tb.algorithm_type AS token_algorithm_type,
+              sc.request_limit AS sliding_request_limit,
+              sc.window_amount AS sliding_window_amount,
+              sc.window_unit AS sliding_window_unit,
+              sc.request_cost AS sliding_request_cost,
+              sc.algorithm_type AS sliding_algorithm_type,
               (SELECT count(*) FROM policy_version_methods m
                  WHERE m.policy_id = pv.policy_id AND m.version = pv.version) AS method_count,
               (SELECT count(*) FROM policy_version_identity_components i
@@ -86,6 +93,8 @@ public final class PostgresPolicyRepository {
               ON fw.policy_id = pv.policy_id AND fw.version = pv.version
             LEFT JOIN token_bucket_configurations tb
               ON tb.policy_id = pv.policy_id AND tb.version = pv.version
+            LEFT JOIN sliding_window_counter_configurations sc
+              ON sc.policy_id = pv.policy_id AND sc.version = pv.version
             WHERE pv.policy_id = :policyId AND pv.version = :version
             """)
         .bind("policyId", policyId)
@@ -403,6 +412,11 @@ public final class PostgresPolicyRepository {
               tb.capacity, tb.initial_tokens, tb.refill_tokens,
               tb.refill_period_amount, tb.refill_period_unit, tb.request_cost,
               tb.algorithm_type AS token_algorithm_type,
+              sc.request_limit AS sliding_request_limit,
+              sc.window_amount AS sliding_window_amount,
+              sc.window_unit AS sliding_window_unit,
+              sc.request_cost AS sliding_request_cost,
+              sc.algorithm_type AS sliding_algorithm_type,
               (SELECT count(*) FROM policy_version_methods m
                 WHERE m.policy_id = pv.policy_id AND m.version = pv.version) AS method_count,
               (SELECT count(*) FROM policy_version_identity_components i
@@ -414,6 +428,8 @@ public final class PostgresPolicyRepository {
               ON fw.policy_id = pv.policy_id AND fw.version = pv.version
             LEFT JOIN token_bucket_configurations tb
               ON tb.policy_id = pv.policy_id AND tb.version = pv.version
+            LEFT JOIN sliding_window_counter_configurations sc
+              ON sc.policy_id = pv.policy_id AND sc.version = pv.version
             WHERE state.singleton_id = 1
             ORDER BY pv.priority DESC, pv.policy_id ASC
             """)
@@ -539,7 +555,8 @@ public final class PostgresPolicyRepository {
   public Mono<Void> deleteAllForTests() {
     return database
         .sql(
-            "TRUNCATE policy_event_outbox, policy_audit, token_bucket_configurations, "
+            "TRUNCATE policy_event_outbox, policy_audit, "
+                + "sliding_window_counter_configurations, token_bucket_configurations, "
                 + "fixed_window_configurations, "
                 + "policy_version_identity_components, policy_version_methods, "
                 + "policy_versions, policies RESTART IDENTITY CASCADE")
@@ -670,6 +687,23 @@ public final class PostgresPolicyRepository {
           .rowsUpdated()
           .then();
     }
+    if (definition.algorithm() instanceof SlidingWindowCounterAlgorithmDefinition slidingCounter) {
+      return database
+          .sql(
+              "INSERT INTO sliding_window_counter_configurations("
+                  + "policy_id, version, algorithm_type, request_limit, window_amount, "
+                  + "window_unit, request_cost) VALUES (:id, :version, "
+                  + "'SLIDING_WINDOW_COUNTER', :limit, :windowAmount, :windowUnit, :requestCost)")
+          .bind("id", id)
+          .bind("version", version)
+          .bind("limit", slidingCounter.limit())
+          .bind("windowAmount", slidingCounter.window().amount())
+          .bind("windowUnit", slidingCounter.window().unit().symbol())
+          .bind("requestCost", slidingCounter.requestCost())
+          .fetch()
+          .rowsUpdated()
+          .then();
+    }
     return Mono.error(new IllegalArgumentException("unsupported policy algorithm"));
   }
 
@@ -687,6 +721,16 @@ public final class PostgresPolicyRepository {
                 database
                     .sql(
                         "DELETE FROM token_bucket_configurations "
+                            + "WHERE policy_id = :id AND version = :version")
+                    .bind("id", id)
+                    .bind("version", version)
+                    .fetch()
+                    .rowsUpdated()
+                    .then())
+            .then(
+                database
+                    .sql(
+                        "DELETE FROM sliding_window_counter_configurations "
                             + "WHERE policy_id = :id AND version = :version")
                     .bind("id", id)
                     .bind("version", version)
@@ -958,7 +1002,9 @@ public final class PostgresPolicyRepository {
     String algorithmType = required(row, "algorithm_type", String.class);
     boolean fixedPresent = row.get("fixed_algorithm_type", String.class) != null;
     boolean tokenPresent = row.get("token_algorithm_type", String.class) != null;
-    if (fixedPresent == tokenPresent) {
+    boolean slidingPresent = row.get("sliding_algorithm_type", String.class) != null;
+    int subtypeCount = (fixedPresent ? 1 : 0) + (tokenPresent ? 1 : 0) + (slidingPresent ? 1 : 0);
+    if (subtypeCount != 1) {
       throw new IllegalStateException("stored policy must contain exactly one algorithm subtype");
     }
     lab.ratelimiter.gateway.policy.control.PolicyAlgorithmDefinition algorithm;
@@ -977,6 +1023,14 @@ public final class PostgresPolicyRepository {
                   required(row, "refill_period_amount", Long.class),
                   refillUnit(required(row, "refill_period_unit", String.class))),
               required(row, "request_cost", Long.class));
+    } else if ("SLIDING_WINDOW_COUNTER".equals(algorithmType) && slidingPresent) {
+      algorithm =
+          new SlidingWindowCounterAlgorithmDefinition(
+              required(row, "sliding_request_limit", Long.class),
+              new WindowDuration(
+                  required(row, "sliding_window_amount", Long.class),
+                  windowUnit(required(row, "sliding_window_unit", String.class))),
+              required(row, "sliding_request_cost", Long.class));
     } else {
       throw new IllegalStateException(
           "stored policy algorithm discriminator conflicts with subtype");
@@ -1014,6 +1068,15 @@ public final class PostgresPolicyRepository {
       }
     }
     throw new IllegalStateException("stored refill period unit is unsupported");
+  }
+
+  private static WindowDuration.Unit windowUnit(String symbol) {
+    for (WindowDuration.Unit unit : WindowDuration.Unit.values()) {
+      if (unit.symbol().equals(symbol)) {
+        return unit;
+      }
+    }
+    throw new IllegalStateException("stored window unit is unsupported");
   }
 
   private static OutboxEvent mapOutbox(Row row) {
